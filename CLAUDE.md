@@ -47,7 +47,7 @@ gh issue list --repo Dunpark/pdf2md --state all --limit 10
 # (그 테스트들이 `notes.*` 를 임포트하는데 루트에는 그 경로가 없다).
 python -m pdf2md "Attention is all you need.pdf"  # → Gate A OK → output/{stem}.md + images/
                                                   #   캐시 히트 시 0.4s·네트워크 없음. 실 API 검증 완료(2026-08-22)
-python -m pytest tests/ -q                        # → 30 passed (루트에서. bare pytest 금지 — 아래 함정 참조)
+python -m pytest tests/ -q                        # → 44 passed (루트에서. bare pytest 금지 — 아래 함정 참조)
 (cd reference && python -m pytest tests/ -q)     # → 36 passed
 
 python -m pdf2md.strict                           # → self-check passed, exit 0
@@ -97,7 +97,7 @@ PDF→Markdown 변환기의 자체 구현.
 
 ## §4. 진행 경과
 
-**현재 단계: Phase 1 완료(#6까지) — 실물 `output/{stem}.md` 확보. 다음은 #7(출력 품질 판정, 사용자 몫)**
+**현재 단계: #7 판정 완료 + Phase 3 정제 구현(#13) — 산출물은 정제된 md (파이프 표·참조 링크·헤딩 깊이). P4·P5는 사용자 결정 대기**
 
 | 시점 | 내용 |
 |---|---|
@@ -116,6 +116,8 @@ PDF→Markdown 변환기의 자체 구현.
 | 〃 | #2 완료·머지 (PR #8) — `strict.py` 공유 타입 고정. `Violation`에 severity(위반/경고 2단계)·detail 추가 |
 | 〃 | Wave 2를 worktree 격리 에이전트 3개로 병렬 수행 → PR #9(#4)·#10(#3)·#11(#5) 전부 머지. 22 tests. 실 API·실 ZIP은 여전히 미검증(#6 몫) |
 | 〃 | #6 CLI 통합. 첫 실 API 실행에서 Gate A가 수식 5건 오탐 → 실측 스키마(equation은 `text` 키)로 gate_a 수정, `chart` 타입 추가. PLAN 스키마 표 실측 기준으로 개정. 재실행 Gate A OK → 실물 md 확보 |
+| 〃 | #7 판정: 내용 손실 0, 표현 3건 깨짐(P1 HTML표·P2 참조링크·P3 헤딩 평탄화, 사용자+PDF 대조로 확정). P4·P5 보류. PLAN Phase 2·3 확정 후 #13으로 `refine.py` 구현 — 수식 불가침·불확실 시 원본 유지+경고 |
+| 〃 | Orca 실측으로 R2 재설계(HTML 앵커→References 번호 미니 헤딩+슬러그 링크, §11.10). 사용자 확인: P1 표·P2 점프 해결. P6(볼드 소실)은 MinerU 한계로 종결 — 스타일 정보가 응답 어디에도 없음(PLAN Phase 2) |
 
 ### v2 변경의 파급
 
@@ -157,11 +159,10 @@ Wave 2를 시작하면 세 갈래가 각자 다른 데이터 모양을 가정해
 
 ### 다음 할 일
 
-**#7 — 출력 품질 판정.** `output/Attention is all you need.md`를 원본 PDF와
-눈으로 대조한다 — 이것은 **사용자 판정**이다(§10). 코딩 에이전트가 할 일은
-체크리스트(수식·표·그림·읽기 순서·제목 레벨, PLAN.md Phase 2)를 정리해 넘기고
-기다리는 것. 그 결과가 Phase 2(정제 범위 확정)의 입력이 된다. 정제 구현 티켓은
-#7이 끝나기 전에는 발행할 수 없다.
+열린 결정 두 개가 **사용자 판정 대기**다 (PLAN.md Phase 2의 P4·P5):
+저작권 각주의 처분과 부록 제목의 헤딩화. 결정되면 규칙을 `refine.py`에 추가한다.
+그 외에는 다른 논문을 투입해 Gate A·정제가 일반화되는지 보는 것이 자연스러운
+다음 단계다 — 새 문제가 나오면 그것이 새 티켓이 된다.
 
 ---
 
@@ -173,7 +174,7 @@ Wave 2를 시작하면 세 갈래가 각자 다른 데이터 모양을 가정해
 | 디렉터리 | 무엇을 위한 곳인가 |
 |---|---|
 | (루트) | 설계 문서와 규약 |
-| `pdf2md/` | 소스 6모듈 전부 존재: `__main__`(CLI·조립) · `strict`(공유 타입) · `mineru_api`(네트워크만) · `cache`(디스크만) · `gate_a`(손실 감지) |
+| `pdf2md/` | 소스: `__main__`(CLI·조립) · `strict`(공유 타입) · `mineru_api`(네트워크만) · `cache`(디스크만) · `gate_a`(손실 감지) · `refine`(Phase 3 정제, output에만 적용 — 캐시는 원본 유지) |
 | `tests/` | 루트 pytest 스위트 (`test_cache` · `test_gate_a`). `reference/tests/`와 절대 섞어 돌리지 않는다 |
 | `reference/` | **보류된 Notion 경로의 원본.** 외부 프로젝트에서 복사해 온 읽기 전용 자료. 이번 계획에서 한 줄도 쓰지 않는다. 자체 pytest 스위트를 가지며 **반드시 이 디렉터리 안에서 실행**해야 한다(§1) |
 | `cache/` | MinerU 응답 캐시 `{sha256(pdf)}/`. git 추적 금지. 지워도 안전하지만 지우면 API 할당량을 다시 태운다 |
@@ -283,7 +284,7 @@ Python  3.13.15
 ```bash
 python -m pdf2md.strict                          # strict.py 자체 점검 — passed, exit 0
 python -m pdf2md.mineru_api                      # API 클라이언트 자체 점검 (MockTransport) — passed
-python -m pytest tests/ -q                       # 루트 스위트 — 30 passed
+python -m pytest tests/ -q                       # 루트 스위트 — 44 passed
 (cd reference && python -m pytest tests/ -q)     # 보류된 참조 코드 회귀 — 36 passed
 python -m pdf2md "Attention is all you need.pdf" # 끝까지 — Gate A OK → output/ 조립 (실 API 검증 완료)
 ```
@@ -329,6 +330,10 @@ CI가 없다. 모든 검증은 로컬에서 수동으로 이뤄진다.
    아니라 `text` 키, `chart` 등 미기재 타입 존재 → Gate A 오탐 5건). 현재 표는
    실측(2026-08-22) 기준으로 개정됨. 새 필드에 의존하기 전에 캐시의 실물
    `content_list.json`을 먼저 본다.
+10. **사용자의 뷰어는 Orca(디폴트 뷰)다.** 실측: HTML `<a id>` 앵커로는 점프가
+    안 되고, **각주 문법(`[^N]:`)이 한 줄이라도 있으면 파일 전체가 코드 모드로
+    강제**되며, GitHub식 헤딩 슬러그 링크만 문서 내 점프가 된다. md 출력 규칙을
+    바꿀 때 이 세 가지를 전제로 한다 (PLAN.md Phase 3 R2).
 
 ---
 
