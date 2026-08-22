@@ -45,9 +45,11 @@ gh issue list --repo Dunpark/pdf2md --state all --limit 10
 # 기존 Notion 파서 회귀 확인 — 반드시 reference/ 안에서 실행한다.
 # 루트에서 bare `python -m pytest` 를 돌리면 reference/tests/ 를 수집하다 실패한다
 # (그 테스트들이 `notes.*` 를 임포트하는데 루트에는 그 경로가 없다).
+python -m pytest tests/ -q                        # → 22 passed (루트에서. bare pytest 금지 — 아래 함정 참조)
 (cd reference && python -m pytest tests/ -q)     # → 36 passed
 
 python -m pdf2md.strict                           # → self-check passed, exit 0
+python -m pdf2md.mineru_api                       # → self-check passed (MockTransport, 네트워크 안 탐)
 python --version                                  # → 3.13.15
 gh auth status                                    # → Dunpark, scopes: repo/workflow/gist/read:org
 ```
@@ -56,8 +58,8 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 
 | 명령 | 왜 미검증인가 |
 |---|---|
-| `python -m pytest tests/ -q` | `tests/` 미생성 |
 | `python -m pdf2md "<pdf>"` | `__main__.py` 미구현 (#6) |
+| MinerU 실 API 호출 | 코드는 있으나 라이브 응답을 받아본 적 없음 — #6에서 처음 확인 |
 
 ### 어기면 안 되는 것
 
@@ -100,7 +102,7 @@ PDF→Markdown 변환기의 자체 구현.
 
 ## §4. 진행 경과
 
-**현재 단계: Wave 1(#2) 머지 완료 — `pdf2md/strict.py` 존재. Wave 2(#3·#4·#5) 병렬 시작 가능**
+**현재 단계: Wave 2(#3·#4·#5) 머지 완료 — 6모듈 중 `__main__.py`만 남음. 다음은 #6(CLI 통합, 수렴점)**
 
 | 시점 | 내용 |
 |---|---|
@@ -117,6 +119,7 @@ PDF→Markdown 변환기의 자체 구현.
 | 〃 | 병렬 워크플로우를 위해 PLAN의 파일 구조를 4모듈 → 6모듈로 분리 (근거는 PLAN.md "파일 구조") |
 | 〃 | 첫 커밋 — `origin/main` 생성 (#1) |
 | 〃 | #2 완료·머지 (PR #8) — `strict.py` 공유 타입 고정. `Violation`에 severity(위반/경고 2단계)·detail 추가 |
+| 〃 | Wave 2를 worktree 격리 에이전트 3개로 병렬 수행 → PR #9(#4)·#10(#3)·#11(#5) 전부 머지. 22 tests. 실 API·실 ZIP은 여전히 미검증(#6 몫) |
 
 ### v2 변경의 파급
 
@@ -158,9 +161,11 @@ Wave 2를 시작하면 세 갈래가 각자 다른 데이터 모양을 가정해
 
 ### 다음 할 일
 
-**Wave 2 — #3·#4·#5를 완전 병렬로.** 세 티켓은 서로 다른 파일을 소유하고 `strict`만
-임포트한다. 그 다음 #6(CLI 통합, 수렴점). 목표는 **이 논문의 실제 `.md`를 손에
-넣는 것**이다. 정제(Phase 2·3)는 그 결과를 보고 정하므로 Phase 1 없이는 설계할 수 없다.
+**#6 — CLI 통합(수렴점).** `__main__.py`가 mineru_api·cache·gate_a를 조립한다.
+실 API를 처음 태우는 지점이므로 `.env`가 있는 메인 체크아웃에서 작업해야 한다
+(gitignore된 `.env`는 별도 worktree에 복사되지 않는다). 목표는 **이 논문의 실제
+`.md`를 손에 넣는 것**이다. 정제(Phase 2·3)는 그 결과를 보고 정하므로 Phase 1
+없이는 설계할 수 없다.
 
 ---
 
@@ -172,7 +177,8 @@ Wave 2를 시작하면 세 갈래가 각자 다른 데이터 모양을 가정해
 | 디렉터리 | 무엇을 위한 곳인가 |
 |---|---|
 | (루트) | 설계 문서와 규약 |
-| `pdf2md/` | 소스. 현재 `__init__.py` + `strict.py`(공유 타입·에러·format_report)만 존재. 나머지 모듈은 #3~#6 |
+| `pdf2md/` | 소스. `strict`(공유 타입) · `mineru_api`(네트워크만) · `cache`(디스크만) · `gate_a`(손실 감지) 존재. `__main__.py`만 남음(#6) |
+| `tests/` | 루트 pytest 스위트 (`test_cache` · `test_gate_a`). `reference/tests/`와 절대 섞어 돌리지 않는다 |
 | `reference/` | **보류된 Notion 경로의 원본.** 외부 프로젝트에서 복사해 온 읽기 전용 자료. 이번 계획에서 한 줄도 쓰지 않는다. 자체 pytest 스위트를 가지며 **반드시 이 디렉터리 안에서 실행**해야 한다(§1) |
 | `cache/` | MinerU 응답 캐시 `{sha256(pdf)}/`. git 추적 금지. 지워도 안전하지만 지우면 API 할당량을 다시 태운다 |
 | `output/` | 최종 산출물 `{stem}.md` + `images/`. git 추적 금지. 언제든 재생성 가능 |
@@ -199,7 +205,7 @@ md에는 페이지 경계도 빈 블록도 없어서 "3페이지짜리 표가 �
 
 ### 테스트
 
-`tests/`(예정)는 루트 pytest로 돌린다. `reference/tests/`는 **별도 스위트**이며
+`tests/`는 루트 pytest로 돌린다. `reference/tests/`는 **별도 스위트**이며
 경로 문제로 루트에서 수집되면 실패한다(§1). 두 스위트를 한 번에 돌리지 않는다.
 
 ---
@@ -280,10 +286,12 @@ Python  3.13.15
 
 ```bash
 python -m pdf2md.strict                          # strict.py 자체 점검 — passed, exit 0
+python -m pdf2md.mineru_api                      # API 클라이언트 자체 점검 (MockTransport) — passed
+python -m pytest tests/ -q                       # 루트 스위트 — 22 passed
 (cd reference && python -m pytest tests/ -q)     # 보류된 참조 코드 회귀 — 36 passed
 ```
 
-`tests/`가 생기면 여기에 `python -m pytest tests/ -q` 와
+`__main__.py`가 생기면(#6) 여기에
 `python -m pdf2md "Attention is all you need.pdf"` 를 추가한다.
 
 CI가 없다. 모든 검증은 로컬에서 수동으로 이뤄진다.
