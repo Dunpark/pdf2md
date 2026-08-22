@@ -45,7 +45,9 @@ gh issue list --repo Dunpark/pdf2md --state all --limit 10
 # 기존 Notion 파서 회귀 확인 — 반드시 reference/ 안에서 실행한다.
 # 루트에서 bare `python -m pytest` 를 돌리면 reference/tests/ 를 수집하다 실패한다
 # (그 테스트들이 `notes.*` 를 임포트하는데 루트에는 그 경로가 없다).
-python -m pytest tests/ -q                        # → 22 passed (루트에서. bare pytest 금지 — 아래 함정 참조)
+python -m pdf2md "Attention is all you need.pdf"  # → Gate A OK → output/{stem}.md + images/
+                                                  #   캐시 히트 시 0.4s·네트워크 없음. 실 API 검증 완료(2026-08-22)
+python -m pytest tests/ -q                        # → 30 passed (루트에서. bare pytest 금지 — 아래 함정 참조)
 (cd reference && python -m pytest tests/ -q)     # → 36 passed
 
 python -m pdf2md.strict                           # → self-check passed, exit 0
@@ -53,13 +55,6 @@ python -m pdf2md.mineru_api                       # → self-check passed (MockT
 python --version                                  # → 3.13.15
 gh auth status                                    # → Dunpark, scopes: repo/workflow/gist/read:org
 ```
-
-**아직 검증하지 못한 명령** (해당 대상이 존재하지 않음. 만들고 나서 이 표를 고칠 것):
-
-| 명령 | 왜 미검증인가 |
-|---|---|
-| `python -m pdf2md "<pdf>"` | `__main__.py` 미구현 (#6) |
-| MinerU 실 API 호출 | 코드는 있으나 라이브 응답을 받아본 적 없음 — #6에서 처음 확인 |
 
 ### 어기면 안 되는 것
 
@@ -102,7 +97,7 @@ PDF→Markdown 변환기의 자체 구현.
 
 ## §4. 진행 경과
 
-**현재 단계: Wave 2(#3·#4·#5) 머지 완료 — 6모듈 중 `__main__.py`만 남음. 다음은 #6(CLI 통합, 수렴점)**
+**현재 단계: Phase 1 완료(#6까지) — 실물 `output/{stem}.md` 확보. 다음은 #7(출력 품질 판정, 사용자 몫)**
 
 | 시점 | 내용 |
 |---|---|
@@ -120,6 +115,7 @@ PDF→Markdown 변환기의 자체 구현.
 | 〃 | 첫 커밋 — `origin/main` 생성 (#1) |
 | 〃 | #2 완료·머지 (PR #8) — `strict.py` 공유 타입 고정. `Violation`에 severity(위반/경고 2단계)·detail 추가 |
 | 〃 | Wave 2를 worktree 격리 에이전트 3개로 병렬 수행 → PR #9(#4)·#10(#3)·#11(#5) 전부 머지. 22 tests. 실 API·실 ZIP은 여전히 미검증(#6 몫) |
+| 〃 | #6 CLI 통합. 첫 실 API 실행에서 Gate A가 수식 5건 오탐 → 실측 스키마(equation은 `text` 키)로 gate_a 수정, `chart` 타입 추가. PLAN 스키마 표 실측 기준으로 개정. 재실행 Gate A OK → 실물 md 확보 |
 
 ### v2 변경의 파급
 
@@ -161,11 +157,11 @@ Wave 2를 시작하면 세 갈래가 각자 다른 데이터 모양을 가정해
 
 ### 다음 할 일
 
-**#6 — CLI 통합(수렴점).** `__main__.py`가 mineru_api·cache·gate_a를 조립한다.
-실 API를 처음 태우는 지점이므로 `.env`가 있는 메인 체크아웃에서 작업해야 한다
-(gitignore된 `.env`는 별도 worktree에 복사되지 않는다). 목표는 **이 논문의 실제
-`.md`를 손에 넣는 것**이다. 정제(Phase 2·3)는 그 결과를 보고 정하므로 Phase 1
-없이는 설계할 수 없다.
+**#7 — 출력 품질 판정.** `output/Attention is all you need.md`를 원본 PDF와
+눈으로 대조한다 — 이것은 **사용자 판정**이다(§10). 코딩 에이전트가 할 일은
+체크리스트(수식·표·그림·읽기 순서·제목 레벨, PLAN.md Phase 2)를 정리해 넘기고
+기다리는 것. 그 결과가 Phase 2(정제 범위 확정)의 입력이 된다. 정제 구현 티켓은
+#7이 끝나기 전에는 발행할 수 없다.
 
 ---
 
@@ -177,7 +173,7 @@ Wave 2를 시작하면 세 갈래가 각자 다른 데이터 모양을 가정해
 | 디렉터리 | 무엇을 위한 곳인가 |
 |---|---|
 | (루트) | 설계 문서와 규약 |
-| `pdf2md/` | 소스. `strict`(공유 타입) · `mineru_api`(네트워크만) · `cache`(디스크만) · `gate_a`(손실 감지) 존재. `__main__.py`만 남음(#6) |
+| `pdf2md/` | 소스 6모듈 전부 존재: `__main__`(CLI·조립) · `strict`(공유 타입) · `mineru_api`(네트워크만) · `cache`(디스크만) · `gate_a`(손실 감지) |
 | `tests/` | 루트 pytest 스위트 (`test_cache` · `test_gate_a`). `reference/tests/`와 절대 섞어 돌리지 않는다 |
 | `reference/` | **보류된 Notion 경로의 원본.** 외부 프로젝트에서 복사해 온 읽기 전용 자료. 이번 계획에서 한 줄도 쓰지 않는다. 자체 pytest 스위트를 가지며 **반드시 이 디렉터리 안에서 실행**해야 한다(§1) |
 | `cache/` | MinerU 응답 캐시 `{sha256(pdf)}/`. git 추적 금지. 지워도 안전하지만 지우면 API 할당량을 다시 태운다 |
@@ -189,7 +185,7 @@ Wave 2를 시작하면 세 갈래가 각자 다른 데이터 모양을 가정해
 
 | 진입점 | 담당 |
 |---|---|
-| `python -m pdf2md <pdf>` | (계획) 유일한 진입점. 인자 파싱 → 파싱 → Gate A → 정제 → 출력 |
+| `python -m pdf2md <pdf>` | 유일한 진입점. 인자 파싱 → 파싱(캐시/API) → Gate A → 출력. 정제 단계는 Phase 3에서 추가 |
 
 ### 런타임 흐름
 
@@ -287,12 +283,10 @@ Python  3.13.15
 ```bash
 python -m pdf2md.strict                          # strict.py 자체 점검 — passed, exit 0
 python -m pdf2md.mineru_api                      # API 클라이언트 자체 점검 (MockTransport) — passed
-python -m pytest tests/ -q                       # 루트 스위트 — 22 passed
+python -m pytest tests/ -q                       # 루트 스위트 — 30 passed
 (cd reference && python -m pytest tests/ -q)     # 보류된 참조 코드 회귀 — 36 passed
+python -m pdf2md "Attention is all you need.pdf" # 끝까지 — Gate A OK → output/ 조립 (실 API 검증 완료)
 ```
-
-`__main__.py`가 생기면(#6) 여기에
-`python -m pdf2md "Attention is all you need.pdf"` 를 추가한다.
 
 CI가 없다. 모든 검증은 로컬에서 수동으로 이뤄진다.
 
@@ -328,6 +322,13 @@ CI가 없다. 모든 검증은 로컬에서 수동으로 이뤄진다.
    `content_list.json`을 주지 않아 Gate A가 불가능하다. v4 Precise API + 토큰 필수.
 7. **로컬 폴더명(`PDF_to_Notion`)과 원격 저장소명(`pdf2md`)이 다르다.** 의도된
    것이며 git 동작에 영향 없다.
+8. **Windows 콘솔(cp949)에서 유니코드 출력이 `UnicodeEncodeError`로 죽는다.**
+   리포트의 em-dash로 실제 크래시가 났다. `__main__.py`가 stdout/stderr를
+   `errors="replace"`로 재구성해 막는다 — 새 출력 경로를 만들면 같은 함정을 조심.
+9. **PLAN의 API 스키마는 문서 기반 초판이 실측과 달랐다** (equation이 `content`가
+   아니라 `text` 키, `chart` 등 미기재 타입 존재 → Gate A 오탐 5건). 현재 표는
+   실측(2026-08-22) 기준으로 개정됨. 새 필드에 의존하기 전에 캐시의 실물
+   `content_list.json`을 먼저 본다.
 
 ---
 

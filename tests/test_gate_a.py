@@ -5,14 +5,17 @@ from pdf2md.gate_a import gate_a
 
 
 def _clean():
-    """정상적인 content_list — 모든 타입이 내용을 갖고 페이지가 이어진다."""
+    """정상적인 content_list — 실측 VLM 스키마 (2026-08-22, 실제 응답 기준)."""
     return [
         {"type": "text", "page_idx": 0, "text": "Attention Is All You Need", "text_level": 1},
-        {"type": "text", "page_idx": 0, "text": "본문 문단.", "text_level": 0},
-        {"type": "image", "page_idx": 1, "img_path": "images/fig1.jpg", "img_caption": ["Figure 1"]},
-        {"type": "equation", "page_idx": 1, "content": "E = mc^2"},
+        {"type": "text", "page_idx": 0, "text": "본문 문단."},
+        {"type": "image", "page_idx": 1, "img_path": "images/fig1.jpg",
+         "image_caption": ["Figure 1"], "content": ""},
+        {"type": "equation", "page_idx": 1, "text": "$$E = mc^2$$", "text_format": "latex"},
         {"type": "table", "page_idx": 2, "table_body": "<table><tr><td>1</td></tr></table>",
          "img_path": "images/tbl1.jpg"},
+        {"type": "chart", "page_idx": 2, "img_path": "images/chart.jpg", "content": "csv,here"},
+        {"type": "ref_text", "page_idx": 2, "text": "[1] some paper"},
     ]
 
 
@@ -48,12 +51,33 @@ def test_image_lost_is_violation():
 
 
 def test_equation_lost_is_violation():
-    # 조건 4: equation인데 content 빔
-    blocks = [{"type": "equation", "page_idx": 0, "content": ""}]
+    # 조건 4: equation인데 내용 빔. 실측 VLM은 LaTeX를 text 키에 담는다 —
+    # text·content 둘 다 비어야 소실이다
+    blocks = [{"type": "equation", "page_idx": 0, "text": "", "text_format": "latex"}]
     (v,) = gate_a(blocks)
     assert v.severity == "violation"
     assert v.condition == "equation lost"
     assert (v.page_idx, v.block_index) == (0, 0)
+
+
+def test_equation_with_text_key_is_not_lost():
+    # 실측 스키마 오탐 재발 방지 — text에 LaTeX가 있으면 content가 없어도 정상
+    blocks = [{"type": "equation", "page_idx": 0, "text": "$$x$$", "text_format": "latex"}]
+    assert gate_a(blocks) == []
+
+
+def test_equation_with_legacy_content_key_is_not_lost():
+    # PLAN 구스키마(content 키)도 계속 정상으로 취급한다
+    blocks = [{"type": "equation", "page_idx": 0, "content": "x^2"}]
+    assert gate_a(blocks) == []
+
+
+def test_chart_lost_is_violation():
+    # 실측에서 발견된 chart 타입 — image와 같은 손실 모드 (img_path 빔)
+    blocks = [{"type": "chart", "page_idx": 0, "img_path": "", "content": ""}]
+    (v,) = gate_a(blocks)
+    assert v.severity == "violation"
+    assert v.condition == "chart lost"
 
 
 def test_page_gap_is_violation():
