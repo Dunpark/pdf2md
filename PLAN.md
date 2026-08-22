@@ -111,14 +111,21 @@ HTTPS  200, 0.78s
 
 ### `content_list.json` 스키마 — Gate A가 여기 의존한다
 
+**실측 기준** (2026-08-22, 이 논문의 실제 v4 VLM 응답, v1 content_list).
+문서 기반이던 초판과 달랐던 곳은 굵게 표시.
+
 | type | 필드 |
 |---|---|
-| 공통 | `type`, `page_idx`, `bbox` |
-| `text` | `text`, `text_level` (0=문단, 1=H1, 2=H2 …) |
-| `image` | `img_path`, `img_caption`, `img_footnote` |
-| `table` | `table_body`(**HTML**), `table_caption`, `table_footnote`, `img_path`(**표 인식 실패 시 폴백 이미지**) |
-| `equation` | `content` (LaTeX 원문) |
-| `list` / `code` | `content` / `code_body`, `guess_lang` (VLM 전용) |
+| 공통 | `type`, `page_idx`(int, 0부터), `bbox` |
+| `text` | `text`, `text_level` (제목에만 존재, 문단엔 키 자체가 없음) |
+| `image` | `img_path`, **`image_caption`, `image_footnote`** (`img_*` 아님), `content`(빈 값) |
+| `table` | `table_body`(**HTML**), `table_caption`, `table_footnote`, `img_path`(**항상 존재** — 표 렌더 이미지) |
+| `equation` | **`text` (LaTeX 원문) + `text_format: "latex"`. `content` 키 없음** — Gate A는 둘 다 인정 |
+| **`chart`** | **실측에서 발견.** `img_path`, `content`(CSV형 텍스트), `chart_caption`, `chart_footnote` |
+| **기타 실측 타입** | `ref_text`(참고문헌 줄), `page_number`, `page_footnote`, `footer`, `aside_text` — 전부 `text`만 |
+| `list` / `code` | 이 논문에는 미출현 — **미검증** |
+
+같은 ZIP에 `*_content_list_v2.json`(신형식 추정)도 동봉되나 v1만 사용한다.
 
 **MinerU는 표를 HTML `<table>`로 낸다** — 다중 헤더·병합 셀을 마크다운이 표현하지
 못하므로 의도된 선택이다. 마크다운 출력에서는 **그대로 두면 된다**(대부분의 뷰어가
@@ -196,7 +203,8 @@ def parse_pdf(pdf_path: Path) -> ParseResult
 | `type=="table"` 이고 `table_body` 빔 **이고** `img_path` 도 빔 | **위반** — [#4311](https://github.com/opendatalab/MinerU/issues/4311) 유형, 표 전체 소실 |
 | `type=="table"` 이고 `table_body` 빔 이지만 `img_path` 있음 | 경고 — 이미지로 폴백되어 내용은 남음 |
 | `type=="image"` 이고 `img_path` 빔 | **위반** |
-| `type=="equation"` 이고 `content` 빔 | **위반** |
+| `type=="chart"` 이고 `img_path` 빔 **이고** `content` 도 빔 | **위반** — 실측 타입, image와 같은 손실 모드 |
+| `type=="equation"` 이고 `text` 빔 **이고** `content` 도 빔 | **위반** — 실측 VLM은 `text` 키 사용 |
 | `page_idx` 연속성이 끊김 | **위반** — [#3849](https://github.com/opendatalab/MinerU/issues/3849) 유형, 페이지 통째 소실 |
 
 두 이슈 모두 열려 있고, **md로 내려오면 원리적으로 감지 불가**하다 — md에는 페이지
@@ -274,12 +282,14 @@ python -m pdf2md "Attention is all you need.pdf"
 
 ## 미확인 사항
 
-1. **ZIP 내부 정확한 파일명.** `auto/`에 md·JSON이, `images/`에 이미지가 들어간다는
-   것까지 확인. md 파일명이 1차 출처로 확정되지 않았다 → **glob으로 찾는다.**
+1. ~~ZIP 내부 정확한 파일명~~ **실측 확인 (2026-08-22).** `auto/` 없이 평평한 구조:
+   `{uuid}_content_list.json`·`_content_list_v2.json`·`_model.json`·`_origin.pdf`·
+   `full.md`·`layout.json`·`images/`. uuid가 매번 달라질 것이므로 **glob 유지가 맞다.**
 2. **`data_id` 필수 여부.** 문서 예시엔 있으나 선택인지 불명. 일단 넣는다.
 3. **MinerU 무료의 지속성.** "目前"(현재)이라는 단서가 붙어 있다.
-4. **MinerU가 이 PDF에서 실제로 뱉는 md의 형태.** 벤치마크는 대리 지표다.
-   Phase 1이 이걸 확인하기 위한 단계이고, Phase 2·3은 그 결과에 전적으로 의존한다.
+4. ~~MinerU가 이 PDF에서 실제로 뱉는 md의 형태~~ **실물 확보 (2026-08-22).**
+   `output/Attention is all you need.md` + 이미지 14개. 품질 판정(Phase 2의 입력)은
+   사용자 몫으로 남아 있다.
 
 ---
 

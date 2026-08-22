@@ -49,11 +49,15 @@ def gate_a(content_list: list[dict]) -> list[Violation]:
                     "table fell back to image", page_idx=page, block_index=i,
                     severity="warning", detail=str(block.get("img_path")),
                 ))
-        # 조건 3: 이미지 경로 빔
+        # 조건 3: 이미지 경로 빔. chart는 실측(2026-08-22)에서 발견된 이미지형 타입 —
+        # 같은 손실 모드지만 content(데이터 텍스트)가 남아 있으면 소실이 아니다
         elif btype == "image" and _blank(block, "img_path"):
             violations.append(Violation("image lost", page_idx=page, block_index=i))
-        # 조건 4: 수식 내용 빔
-        elif btype == "equation" and _blank(block, "content"):
+        elif btype == "chart" and _blank(block, "img_path") and _blank(block, "content"):
+            violations.append(Violation("chart lost", page_idx=page, block_index=i))
+        # 조건 4: 수식 내용 빔 — 실측 VLM은 LaTeX를 text 키에 담는다
+        # (PLAN 구스키마의 content 키도 계속 인정. 둘 다 비어야 소실)
+        elif btype == "equation" and _blank(block, "content") and _blank(block, "text"):
             violations.append(Violation("equation lost", page_idx=page, block_index=i))
 
     return violations
