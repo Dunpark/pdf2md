@@ -117,6 +117,7 @@ PDF→Markdown 변환기의 자체 구현.
 | 〃 | Wave 2를 worktree 격리 에이전트 3개로 병렬 수행 → PR #9(#4)·#10(#3)·#11(#5) 전부 머지. 22 tests. 실 API·실 ZIP은 여전히 미검증(#6 몫) |
 | 〃 | #6 CLI 통합. 첫 실 API 실행에서 Gate A가 수식 5건 오탐 → 실측 스키마(equation은 `text` 키)로 gate_a 수정, `chart` 타입 추가. PLAN 스키마 표 실측 기준으로 개정. 재실행 Gate A OK → 실물 md 확보 |
 | 〃 | #7 판정: 내용 손실 0, 표현 3건 깨짐(P1 HTML표·P2 참조링크·P3 헤딩 평탄화, 사용자+PDF 대조로 확정). P4·P5 보류. PLAN Phase 2·3 확정 후 #13으로 `refine.py` 구현 — 수식 불가침·불확실 시 원본 유지+경고 |
+| 〃 | Orca 실측으로 R2 재설계(HTML 앵커→References 번호 미니 헤딩+슬러그 링크, §11.10). 사용자 확인: P1 표·P2 점프 해결. P6(볼드 소실)은 MinerU 한계로 종결 — 스타일 정보가 응답 어디에도 없음(PLAN Phase 2) |
 
 ### v2 변경의 파급
 
