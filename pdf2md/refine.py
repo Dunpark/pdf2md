@@ -110,7 +110,13 @@ def _convert_tables(md: str, notes: list[str]) -> str:
     return _TABLE_RE.sub(_sub, md)
 
 
-# ---------- R2: References 앵커 + 본문 인용 링크 ----------
+# ---------- R2: References 미니 헤딩 + 본문 인용 링크 ----------
+#
+# 점프 메커니즘은 Orca 디폴트 뷰 실측(2026-08-22)으로 정했다:
+# HTML <a id> 앵커는 점프하지 않고, 각주 문법([^N]:)은 파일 전체를 코드 모드로
+# 강제하며, GitHub식 헤딩 슬러그 링크만 동작한다. 그래서 항목마다 번호만 든
+# 미니 헤딩(###### [18] → 슬러그 "18")을 세운다 — 항목 전문을 헤딩으로 만들면
+# 슬러그 계산이 뷰어 구현마다 달라질 수 있어 번호만 쓴다.
 
 def _link_citations(md: str) -> str:
     lines = md.split("\n")
@@ -118,13 +124,13 @@ def _link_citations(md: str) -> str:
     if ref_start is None:
         return md  # References 섹션이 없으면 링크할 대상이 없다
 
-    # References 항목에 앵커를 달고, 실재하는 번호 집합을 모은다
+    # References 항목마다 번호 미니 헤딩을 세우고, 실재하는 번호 집합을 모은다
     known: set[str] = set()
     for i in range(ref_start + 1, len(lines)):
         m = _REF_ENTRY_RE.match(lines[i])
         if m:
             known.add(m.group(1))
-            lines[i] = f'<a id="ref-{m.group(1)}"></a>{lines[i]}'
+            lines[i] = f"###### [{m.group(1)}]\n{lines[i][m.end():]}"
     if not known:
         return md
 
@@ -132,7 +138,7 @@ def _link_citations(md: str) -> str:
         nums = [n.strip() for n in m.group(1).split(",")]
         if not all(n in known for n in nums):
             return m.group(0)  # 목록에 없는 번호는 인용이 아니다 — 건드리지 않는다
-        return "[" + ", ".join(f"[{n}](#ref-{n})" for n in nums) + "]"
+        return "[" + ", ".join(f"[{n}](#{n})" for n in nums) + "]"
 
     in_display_math = False
     for i in range(ref_start):  # 본문에만 적용. References 자신은 제외
