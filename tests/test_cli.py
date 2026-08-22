@@ -96,6 +96,29 @@ def test_warning_only_reports_but_proceeds(tmp_path):
     assert (tmp_path / "output" / "paper.md").is_file()
 
 
+def test_output_is_refined(tmp_path):
+    # 정제(#13)가 파이프라인 상시 단계인지 — 캐시의 HTML 표가 output에서는 파이프 표다
+    import pdf2md.cache as cache
+
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF fake")
+    entry = cache.cache_dir(pdf, tmp_path / "cache")
+    entry.mkdir(parents=True)
+    (entry / "paper.md").write_text(
+        "<table><tr><td>A</td></tr><tr><td>1</td></tr></table>", encoding="utf-8")
+    (entry / "paper_content_list.json").write_text(json.dumps(CLEAN), encoding="utf-8")
+    old = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        assert main([str(pdf)]) == 0
+    finally:
+        os.chdir(old)
+    out = (tmp_path / "output" / "paper.md").read_text(encoding="utf-8")
+    assert "| A |" in out and "<table>" not in out
+    cached = (entry / "paper.md").read_text(encoding="utf-8")
+    assert "<table>" in cached  # 캐시는 원본 그대로 — 정제는 output에만
+
+
 def test_missing_pdf_is_usage_error(tmp_path):
     assert main([str(tmp_path / "no-such.pdf")]) == 2
     assert main([]) == 2

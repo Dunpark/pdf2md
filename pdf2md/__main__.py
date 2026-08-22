@@ -8,11 +8,13 @@ mineru_api를 모르는 이유), Gate A 위반이면 output/을 만들기 전에
 
 from __future__ import annotations
 
+import dataclasses
 import sys
 from pathlib import Path
 
 from pdf2md import cache, mineru_api
 from pdf2md.gate_a import gate_a
+from pdf2md.refine import refine
 from pdf2md.strict import ParseResult, Pdf2mdError, format_report
 
 
@@ -55,8 +57,14 @@ def main(argv: list[str]) -> int:
             print("halt: recognition loss detected — nothing written to output/. "
                   "To retry MinerU, delete the cache entry and rerun.", file=sys.stderr)
             return 1
-        md_path = cache.assemble_output(result, pdf_path.stem)
-        print(f"→ {md_path}")
+        # 정제(PLAN.md Phase 3)는 output에만 적용한다 — 캐시는 MinerU 원본 그대로,
+        # 그래야 정제 규칙이 바뀌어도 API를 다시 태우지 않고 재생성할 수 있다
+        refined_md, notes = refine(result.markdown)
+        for note in notes:
+            print(f"refine: {note}", file=sys.stderr)
+        md_path = cache.assemble_output(
+            dataclasses.replace(result, markdown=refined_md), pdf_path.stem)
+        print(f"-> {md_path}")
         return 0
     except Pdf2mdError as e:
         print(f"error: {e}", file=sys.stderr)
