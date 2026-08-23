@@ -28,9 +28,9 @@ gh issue list --repo Dunpark/pdf2md --state all --limit 10
 | 1 | 파일 목록 | §5의 트리와 일치 |
 | 2 | 구현 진행 단계 | §4의 "현재 단계"와 일치 |
 | 3 | `.env`에 키 2개 | `2` |
-| 4 | PLAN 개정 버전 | `v2` |
+| 4 | PLAN 개정 버전 | `v3` |
 | 5 | 리모트 | `origin → Dunpark/pdf2md` |
-| 6 | 티켓 | `#1`~`#7`이 존재하고 제목이 `TICKET-001`~`TICKET-007` |
+| 6 | 티켓 | `#1`~`#7`·`#13`·`#15`~`#19`가 존재하고 제목이 `TICKET-NNN` 형식 |
 
 **어긋나면 → 작업을 진행하기 전에 이 문서를 먼저 고친다.**
 갱신하지 않은 채로 다음 작업에 들어가지 말 것 — 이 문서가 틀리면 다음 세션이 틀린다.
@@ -45,9 +45,10 @@ gh issue list --repo Dunpark/pdf2md --state all --limit 10
 # 기존 Notion 파서 회귀 확인 — 반드시 reference/ 안에서 실행한다.
 # 루트에서 bare `python -m pytest` 를 돌리면 reference/tests/ 를 수집하다 실패한다
 # (그 테스트들이 `notes.*` 를 임포트하는데 루트에는 그 경로가 없다).
-python -m pdf2md "Attention is all you need.pdf"  # → Gate A OK → output/{stem}.md + images/
-                                                  #   캐시 히트 시 0.4s·네트워크 없음. 실 API 검증 완료(2026-08-22)
-python -m pytest tests/ -q                        # → 44 passed (루트에서. bare pytest 금지 — 아래 함정 참조)
+python -m pdf2md "Attention is all you need.pdf" --md     # → Gate A OK → output/{stem}.md + images/
+                                                          #   캐시 히트 시 0.4s·네트워크 없음
+python -m pdf2md "Attention is all you need.pdf" --notion <page-url>  # → 위 + Notion 페이지 append
+python -m pytest tests/ -q                        # → 93 passed (루트에서. bare pytest 금지 — 아래 함정 참조)
 (cd reference && python -m pytest tests/ -q)     # → 36 passed
 
 python -m pdf2md.strict                           # → self-check passed, exit 0
@@ -88,8 +89,8 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 > 이 프로젝트의 유일한 존재 이유는 **표현할 수 없는 것을 만나면 멈추고 보고하는 것**이다.
 > 어떤 설계 판단이든 이 원칙과 충돌하면 이 원칙이 이긴다.
 
-**범위 밖**: Notion 업로드(보류, [PLAN.md](PLAN.md) 부록), 로컬 MinerU 실행,
-PDF→Markdown 변환기의 자체 구현.
+**범위 밖**: 로컬 MinerU 실행, PDF→Markdown 변환기의 자체 구현.
+(Notion 업로드는 v3에서 범위 안으로 들어왔다 — `--notion`, PLAN.md Phase 4.)
 
 상세 설계와 근거는 [PLAN.md](PLAN.md)가 단일 출처다.
 
@@ -97,7 +98,7 @@ PDF→Markdown 변환기의 자체 구현.
 
 ## §4. 진행 경과
 
-**현재 단계: #7 판정 완료 + Phase 3 정제 구현(#13) — 산출물은 정제된 md (파이프 표·참조 링크·헤딩 깊이). P4·P5는 사용자 결정 대기**
+**현재 단계: Phase 4 Notion 출력 경로 구현(#15~#19) — `--notion`으로 정제 md를 기존 Notion 페이지에 업로드(수식·표·이미지·인용 점프 링크). 실전 업로드의 사용자 육안 판정 대기. P4·P5는 여전히 사용자 결정 대기**
 
 | 시점 | 내용 |
 |---|---|
@@ -118,6 +119,10 @@ PDF→Markdown 변환기의 자체 구현.
 | 〃 | #6 CLI 통합. 첫 실 API 실행에서 Gate A가 수식 5건 오탐 → 실측 스키마(equation은 `text` 키)로 gate_a 수정, `chart` 타입 추가. PLAN 스키마 표 실측 기준으로 개정. 재실행 Gate A OK → 실물 md 확보 |
 | 〃 | #7 판정: 내용 손실 0, 표현 3건 깨짐(P1 HTML표·P2 참조링크·P3 헤딩 평탄화, 사용자+PDF 대조로 확정). P4·P5 보류. PLAN Phase 2·3 확정 후 #13으로 `refine.py` 구현 — 수식 불가침·불확실 시 원본 유지+경고 |
 | 〃 | Orca 실측으로 R2 재설계(HTML 앵커→References 번호 미니 헤딩+슬러그 링크, §11.10). 사용자 확인: P1 표·P2 점프 해결. P6(볼드 소실)은 MinerU 한계로 종결 — 스타일 정보가 응답 어디에도 없음(PLAN Phase 2) |
+| 2026-08-23 | **Notion 출력 경로 부활 결정. PLAN v3 (Phase 4).** 마크다운 직접 입력 API는 기각(append 미지원 — §11.11), `reference/` 이식도 기각(이미지·링크 미지원, 2000자 잘라내기) |
+| 〃 | #15 probe 실측 4건: 블록 앵커 점프 ✔, 표 셀 equation 바이트 동일 생존 ✔, 13열 표 수락 ✔, `\tag{1}` 렌더 ✔ (PLAN Phase 4) |
+| 〃 | #16~#18을 계약 기점 커밋 공유 + worktree 병렬로 구현·머지. `notion_blocks`(순수 변환, 한도 검사 전부)·`notion_upload`(HTTP만)·CLI 대상 선택(`--md`/`--notion`/대화형). `--md` 출력은 종전과 바이트 동일 확인 |
+| 〃 | #19 인용 → 참조 블록 앵커 링크 패치(블록당 1회, 실패는 경고). PLAN v3·이 문서 개정 |
 
 ### v2 변경의 파급
 
@@ -149,20 +154,24 @@ PDF→Markdown 변환기의 자체 구현.
 | 2 | #3 · #4 · #5 | MinerU API · 캐시/출력 조립 · Gate A. **완전 병렬** |
 | 3 | #6 | CLI 통합 (수렴점) |
 | 4 | #7 | 실제 출력 평가 → 정제 범위 확정 (**사용자 판정 필요**) |
+| — | #13 | Phase 3 정제 파이프라인 (R1~R3) |
+| 5 | #15 | Notion probe — 앵커·셀 수식·13열 표·`\tag` 실측 |
+| 6 | #16 · #17 · #18 | 블록 변환 · 업로드 · CLI 대상 선택. **계약 기점 커밋 공유 병렬** |
+| 7 | #19 | 인용 점프 링크 + PLAN v3 (**실전 업로드의 사용자 판정 필요**) |
 
-**Wave 2의 3중 병렬이 성립하는 조건은 두 가지뿐이다** — 세 모듈이 서로를 임포트하지
-않고, 서로 다른 파일을 소유한다. 둘 다 PLAN.md "파일 구조"가 고정한다. #2를 건너뛰고
-Wave 2를 시작하면 세 갈래가 각자 다른 데이터 모양을 가정해 #6에서 세 번 충돌한다.
-
-정제 구현 티켓은 **아직 발행하지 않았다.** #7이 끝나기 전에는 범위를 알 수 없어
-`ticket.md`가 요구하는 다섯 섹션을 채울 수 없다. 시작할 준비가 안 된 것이다.
+**병렬 wave가 성립하는 조건은 두 가지뿐이다** — 모듈이 서로를 임포트하지 않고,
+서로 다른 파일을 소유한다. 공유 타입은 병렬 시작 전에 먼저 존재해야 한다: Wave 2는
+#2가 그 역할이었고, Wave 6은 `NotionDoc`을 담은 계약 기점 커밋을 세 브랜치가
+공유하는 방식으로 해결했다(머지 커밋 방식이라 공유 커밋은 충돌하지 않는다).
 
 ### 다음 할 일
 
-열린 결정 두 개가 **사용자 판정 대기**다 (PLAN.md Phase 2의 P4·P5):
-저작권 각주의 처분과 부록 제목의 헤딩화. 결정되면 규칙을 `refine.py`에 추가한다.
-그 외에는 다른 논문을 투입해 Gate A·정제가 일반화되는지 보는 것이 자연스러운
-다음 단계다 — 새 문제가 나오면 그것이 새 티켓이 된다.
+- **#19 실전 업로드의 육안 판정 대기** — 수식 렌더·표 셀 값·이미지·인용 점프는
+  눈으로만 확인 가능하다 (§10).
+- 열린 결정 두 개 **사용자 판정 대기** (PLAN.md Phase 2의 P4·P5): 저작권 각주의
+  처분과 부록 제목의 헤딩화. 결정되면 규칙을 `refine.py`에 추가한다.
+- 그 외에는 다른 논문을 투입해 Gate A·정제·Notion 변환이 일반화되는지 보는 것이
+  자연스러운 다음 단계다 — 새 문제가 나오면 그것이 새 티켓이 된다.
 
 ---
 
@@ -174,8 +183,8 @@ Wave 2를 시작하면 세 갈래가 각자 다른 데이터 모양을 가정해
 | 디렉터리 | 무엇을 위한 곳인가 |
 |---|---|
 | (루트) | 설계 문서와 규약 |
-| `pdf2md/` | 소스: `__main__`(CLI·조립) · `strict`(공유 타입) · `mineru_api`(네트워크만) · `cache`(디스크만) · `gate_a`(손실 감지) · `refine`(Phase 3 정제, output에만 적용 — 캐시는 원본 유지) |
-| `tests/` | 루트 pytest 스위트 (`test_cache` · `test_gate_a`). `reference/tests/`와 절대 섞어 돌리지 않는다 |
+| `pdf2md/` | 소스: `__main__`(CLI·조립·출력 대상 선택) · `strict`(공유 타입) · `mineru_api`(네트워크만) · `cache`(디스크만) · `gate_a`(손실 감지) · `refine`(Phase 3 정제, output에만 적용 — 캐시는 원본 유지) · `notion_blocks`(Phase 4, 정제 md→NotionDoc, 순수·한도 검사 전부) · `notion_upload`(Phase 4, HTTP만) |
+| `tests/` | 루트 pytest 스위트 (`test_cache` · `test_gate_a` · `test_cli` · `test_refine` · `test_notion_blocks` · `test_notion_upload`). `reference/tests/`와 절대 섞어 돌리지 않는다 |
 | `reference/` | **보류된 Notion 경로의 원본.** 외부 프로젝트에서 복사해 온 읽기 전용 자료. 이번 계획에서 한 줄도 쓰지 않는다. 자체 pytest 스위트를 가지며 **반드시 이 디렉터리 안에서 실행**해야 한다(§1) |
 | `cache/` | MinerU 응답 캐시 `{sha256(pdf)}/`. git 추적 금지. 지워도 안전하지만 지우면 API 할당량을 다시 태운다 |
 | `output/` | 최종 산출물 `{stem}.md` + `images/`. git 추적 금지. 언제든 재생성 가능 |
@@ -186,14 +195,14 @@ Wave 2를 시작하면 세 갈래가 각자 다른 데이터 모양을 가정해
 
 | 진입점 | 담당 |
 |---|---|
-| `python -m pdf2md <pdf>` | 유일한 진입점. 인자 파싱 → 파싱(캐시/API) → Gate A → 출력. 정제 단계는 Phase 3에서 추가 |
+| `python -m pdf2md <pdf> [--md \| --notion [url]]` | 유일한 진입점. 인자 파싱 → 대상 선택(플래그 없으면 대화형) → 파싱(캐시/API) → Gate A → 정제 → output/ → (--notion 시) 블록 변환 → 업로드 |
 
 ### 런타임 흐름
 
 ```
 PDF ─[MinerU API v4]→ cache/{sha256}/ ─[Gate A]→ [정제]→ output/{이름}.md + images/
-                       md + content_list.json      ↑
-                                            인식 실패 감지
+                       md + content_list.json      ↑           │ (--notion 선택 시)
+                                            인식 실패 감지       └→ [블록 변환]→ Notion 페이지
 ```
 
 **Gate A가 `content_list.json`을 보는 이유** — 손실은 JSON에만 흔적이 남는다.
@@ -266,7 +275,7 @@ Python  3.13.15
   | 키 | 용도 |
   |---|---|
   | `MINERU_API_TOKEN` | MinerU 정밀 해석 API v4. **14일 만료**, 재발급 mineru.net/apiManage/token |
-  | `NOTION_API_KEY` | 보류 중인 Notion 경로용. 현재 미사용 |
+  | `NOTION_API_KEY` | Phase 4 Notion 업로드 (`--notion`). `Automations` 통합의 토큰 |
 
 - **소스에 자격증명을 하드코딩하지 않는다.** 토큰은 `.env`에서만 읽는다. (외부에서
   가져온 참고 파일 `notion_blank_quiz.py`에 Notion 토큰이 평문으로 박혀 있었고,
@@ -284,9 +293,10 @@ Python  3.13.15
 ```bash
 python -m pdf2md.strict                          # strict.py 자체 점검 — passed, exit 0
 python -m pdf2md.mineru_api                      # API 클라이언트 자체 점검 (MockTransport) — passed
-python -m pytest tests/ -q                       # 루트 스위트 — 44 passed
+python -m pytest tests/ -q                       # 루트 스위트 — 93 passed
 (cd reference && python -m pytest tests/ -q)     # 보류된 참조 코드 회귀 — 36 passed
-python -m pdf2md "Attention is all you need.pdf" # 끝까지 — Gate A OK → output/ 조립 (실 API 검증 완료)
+python -m pdf2md "Attention is all you need.pdf" --md      # 끝까지 — Gate A OK → output/ 조립
+python -m pdf2md "Attention is all you need.pdf" --notion <page-url>  # 위 + Notion append (실 API)
 ```
 
 CI가 없다. 모든 검증은 로컬에서 수동으로 이뤄진다.
@@ -334,6 +344,16 @@ CI가 없다. 모든 검증은 로컬에서 수동으로 이뤄진다.
     안 되고, **각주 문법(`[^N]:`)이 한 줄이라도 있으면 파일 전체가 코드 모드로
     강제**되며, GitHub식 헤딩 슬러그 링크만 문서 내 점프가 된다. md 출력 규칙을
     바꿀 때 이 세 가지를 전제로 한다 (PLAN.md Phase 3 R2).
+11. **Notion의 마크다운 직접 입력은 append를 지원하지 않는다.** `markdown` 입력은
+    `POST /v1/pages`(새 페이지 생성) 전용이고 `PATCH /v1/blocks/{id}/children`은
+    받지 않는다. 매핑표에 인라인 수식·블록 링크·로컬 이미지도 없다 — 그래서
+    `notion_blocks.py`가 존재한다 (PLAN.md Phase 4).
+12. **`table_row`의 id는 append 응답에 없다.** 응답 `results`는 1단계 자식만 준다.
+    표 셀 안 인용은 그래서 링크 패치가 불가능하다 — 평문 + 경고로 남긴다.
+13. **Notion은 LaTeX를 서버에서 검증하지 않는다.** 깨진 수식도 200을 받고
+    클라이언트에서만 빨간 에러로 뜬다. 업로드 후 렌더 확인은 눈으로만 가능하다.
+14. **Notion API 404는 "없음"과 "통합에 공유 안 됨"을 구분하지 않는다** (함정 3과
+    같은 원인). 에러 메시지가 `Automations` 통합 공유를 안내하게 해뒀다.
 
 ---
 
