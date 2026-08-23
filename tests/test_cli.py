@@ -61,8 +61,13 @@ def test_parse_pdf_fetches_once_then_hits_cache(tmp_path):
     assert r1.content_list == CLEAN
 
 
-def _run_main_in(tmp_path: Path, content_list: list[dict], with_image: bool = False) -> int:
-    """tmp_path를 cwd로 삼아, 캐시를 미리 채워 네트워크 없이 main을 태운다."""
+def _run_main_in(tmp_path: Path, content_list: list[dict], with_image: bool = False,
+                 argv_tail: list[str] | None = None, **kw) -> int:
+    """tmp_path를 cwd로 삼아, 캐시를 미리 채워 네트워크 없이 main을 태운다.
+
+    #18에서 플래그 없는 실행이 대화형이 되어, 기존 시나리오는 --md로 태운다
+    (--md는 종전의 무플래그 동작과 동일해야 한다는 AC 그대로).
+    """
     import pdf2md.cache as cache
 
     pdf = tmp_path / "paper.pdf"
@@ -71,7 +76,7 @@ def _run_main_in(tmp_path: Path, content_list: list[dict], with_image: bool = Fa
     old = os.getcwd()
     os.chdir(tmp_path)
     try:
-        return main([str(pdf)])
+        return main([str(pdf)] + (argv_tail if argv_tail is not None else ["--md"]), **kw)
     finally:
         os.chdir(old)
 
@@ -110,7 +115,7 @@ def test_output_is_refined(tmp_path):
     old = os.getcwd()
     os.chdir(tmp_path)
     try:
-        assert main([str(pdf)]) == 0
+        assert main([str(pdf), "--md"]) == 0
     finally:
         os.chdir(old)
     out = (tmp_path / "output" / "paper.md").read_text(encoding="utf-8")
@@ -122,3 +127,100 @@ def test_output_is_refined(tmp_path):
 def test_missing_pdf_is_usage_error(tmp_path):
     assert main([str(tmp_path / "no-such.pdf")]) == 2
     assert main([]) == 2
+
+
+# ---------- #18: 출력 대상 선택 (Notion 경로) ----------
+
+from pdf2md.strict import NotionApiError, NotionDoc  # noqa: E402
+
+
+def _fake_doc(warnings: list[str] | None = None) -> NotionDoc:
+    return NotionDoc(blocks=[{"type": "paragraph"}], images=[], citations=[],
+                     ref_targets={}, warnings=warnings or [])
+
+
+def test_unknown_flag_is_usage_error(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF fake")
+    assert main([str(pdf), "--bogus"]) == 2
+    assert main(["--md"]) == 2  # PDF 없이 플래그만 → usage
+
+
+def test_no_flag_with_closed_stdin_exits_2(tmp_path):
+    # 파이프·CI에서 input()이 즉시 실패하면 traceback 없이 usage error(2)
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF fake")
+    assert main([str(pdf)]) == 2  # pytest의 stdin은 읽기 즉시 예외를 낸다
+
+
+def test_notion_flag_uploads_after_writing_md(tmp_path, capsys):
+    calls = {}
+
+    def fake_to_blocks(md, image_dir):
+        calls["md"] = md
+        return _fake_doc(warnings=["clamped heading"])
+
+    def fake_upload(doc, page_url, **kw):
+        # 업로드 시점에 output/ md가 이미 존재해야 한다 — md 먼저, Notion은 그다음
+        assert (Path("output") / "paper.md").is_file()
+        calls["page_url"] = page_url
+        return page_url
+
+    code = _run_main_in(tmp_path, CLEAN, with_image=True,
+                        argv_tail=["--notion", "https://notion.so/x"],
+                        to_blocks=fake_to_blocks, upload=fake_upload,
+                        count_children=lambda url, **kw: 0)
+    assert code == 0
+    assert calls["page_url"] == "https://notion.so/x"
+    assert calls["md"] == "# fake md"  # 정제본이 변환기 입력이다
+    assert (tmp_path / "output" / "paper.md").is_file()  # --notion에서도 md는 생성
+    assert "notion: clamped heading" in capsys.readouterr().err
+
+
+def test_notion_upload_failure_keeps_markdown(tmp_path):
+    def fake_upload(doc, page_url, **kw):
+        raise NotionApiError("appended 1 of 3 blocks")
+
+    code = _run_main_in(tmp_path, CLEAN,
+                        argv_tail=["--notion", "https://notion.so/x"],
+                        to_blocks=lambda md, image_dir: _fake_doc(),
+                        upload=fake_upload,
+                        count_children=lambda url, **kw: 0)
+    assert code == 1
+    assert (tmp_path / "output" / "paper.md").is_file()  # md는 부수 피해가 아니다
+
+
+def test_notion_flag_warns_but_proceeds_on_existing_children(tmp_path, capsys):
+    # 플래그 실행은 스크립트를 막지 않는다 — 경고 한 줄 후 진행
+    uploaded = {}
+    code = _run_main_in(tmp_path, CLEAN,
+                        argv_tail=["--notion", "https://notion.so/x"],
+                        to_blocks=lambda md, image_dir: _fake_doc(),
+                        upload=lambda doc, url, **kw: uploaded.setdefault("url", url),
+                        count_children=lambda url, **kw: 3)
+    assert code == 0
+    assert uploaded["url"] == "https://notion.so/x"
+    assert "3" in capsys.readouterr().err
+
+
+def test_interactive_destination_md(tmp_path, monkeypatch):
+    # 대화형에서 1(markdown)을 고르면 Notion 코드는 아예 타지 않는다
+    monkeypatch.setattr("builtins.input", lambda prompt="": "1")
+    code = _run_main_in(tmp_path, CLEAN, argv_tail=[],
+                        to_blocks=None, upload=None, count_children=None)
+    assert code == 0
+    assert (tmp_path / "output" / "paper.md").is_file()
+
+
+def test_notion_flag_without_url_asks_url_only(tmp_path, monkeypatch):
+    asked = []
+    monkeypatch.setattr("builtins.input",
+                        lambda prompt="": asked.append(prompt) or "https://notion.so/x")
+    uploaded = {}
+    code = _run_main_in(tmp_path, CLEAN, argv_tail=["--notion"],
+                        to_blocks=lambda md, image_dir: _fake_doc(),
+                        upload=lambda doc, url, **kw: uploaded.setdefault("url", url),
+                        count_children=lambda url, **kw: 0)
+    assert code == 0
+    assert len(asked) == 1  # URL만 묻는다 — 출력 대상은 이미 정해져 있다
+    assert uploaded["url"] == "https://notion.so/x"
