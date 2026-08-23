@@ -15,7 +15,7 @@
 ```bash
 cd "D:/일/개인프로젝트/PDF_to_Notion"
 find . -type f -not -path "./.git/*" -not -path "*/__pycache__/*" \
-     -not -path "*/.pytest_cache/*" -not -path "./cache/*" -not -path "./output/*" | sort
+     -not -path "*/.pytest_cache/*" -not -path "./cache/*" -not -path "./output/*" -not -path "./pdfs/*" | sort
 ls pdf2md tests 2>/dev/null || echo "구현 미시작"
 grep -c '^[A-Z_]*=' .env
 head -8 PLAN.md | grep -o 'v[0-9]' | tail -1
@@ -42,9 +42,9 @@ gh issue list --repo Dunpark/pdf2md --state all --limit 10
 실제로 실행해 확인한 명령만 적는다.
 
 ```bash
-python -m pdf2md "Attention is all you need.pdf" --md     # → Gate A OK → output/{stem}.md + images/
+python -m pdf2md "pdfs/Attention is all you need.pdf" --md     # → Gate A OK → output/{stem}.md + images/
                                                           #   캐시 히트 시 0.4s·네트워크 없음
-python -m pdf2md "Attention is all you need.pdf" --notion <page-url>  # → 위 + Notion 페이지 append
+python -m pdf2md "pdfs/Attention is all you need.pdf" --notion <page-url>  # → 위 + Notion 페이지 append
 python -m pytest tests/ -q                        # → 105 passed
 
 python -m pdf2md.strict                           # → self-check passed, exit 0
@@ -183,6 +183,7 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 | 디렉터리 | 무엇을 위한 곳인가 |
 |---|---|
 | (루트) | 설계 문서와 규약 |
+| `pdfs/` | 입력 PDF 모음(#34). 시료 논문 하나만 git 추적, 나머지는 `.gitignore`로 무시 — 사용자가 자유롭게 넣고 뺀다 |
 | `pdf2md/` | 소스: `__main__`(CLI·조립·출력 대상 선택) · `strict`(공유 타입) · `mineru_api`(네트워크만) · `cache`(디스크만) · `gate_a`(손실 감지) · `refine`(Phase 3 정제, output에만 적용 — 캐시는 원본 유지) · `notion_blocks`(Phase 4, 정제 md→NotionDoc, 순수·한도 검사 전부) · `notion_upload`(Phase 4, HTTP만) |
 | `tests/` | 루트 pytest 스위트 (`test_cache` · `test_gate_a` · `test_cli` · `test_refine` · `test_notion_blocks` · `test_notion_upload`) |
 | `cache/` | MinerU 응답 캐시 `{sha256(pdf)}/`. git 추적 금지. 지워도 안전하지만 지우면 API 할당량을 다시 태운다 |
@@ -289,8 +290,8 @@ Python  3.13.15
 python -m pdf2md.strict                          # strict.py 자체 점검 — passed, exit 0
 python -m pdf2md.mineru_api                      # API 클라이언트 자체 점검 (MockTransport) — passed
 python -m pytest tests/ -q                       # 루트 스위트 — 105 passed
-python -m pdf2md "Attention is all you need.pdf" --md      # 끝까지 — Gate A OK → output/ 조립
-python -m pdf2md "Attention is all you need.pdf" --notion <page-url>  # 위 + Notion append (실 API)
+python -m pdf2md "pdfs/Attention is all you need.pdf" --md      # 끝까지 — Gate A OK → output/ 조립
+python -m pdf2md "pdfs/Attention is all you need.pdf" --notion <page-url>  # 위 + Notion append (실 API)
 ```
 
 CI가 없다. 모든 검증은 로컬에서 수동으로 이뤄진다.

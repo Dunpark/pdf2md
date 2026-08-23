@@ -403,7 +403,7 @@ HANDOFF 승계 규칙: 프레임워크·픽스처 없이, 비자명 로직마다
 
 ```bash
 python -m pytest tests/ -q
-python -m pdf2md "Attention is all you need.pdf"
+python -m pdf2md "pdfs/Attention is all you need.pdf"
 ```
 
 **첫 실행에서 Gate A가 halt하면 그것도 정상 동작이다.** 리포트를 보고
