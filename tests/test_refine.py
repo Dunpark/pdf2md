@@ -1,4 +1,4 @@
-"""Phase 3 정제 규칙 R1~R3 검증 (PLAN.md Phase 3).
+"""Phase 3 정제 규칙 R1~R5 검증 (PLAN.md Phase 3).
 
 원칙: 절대 내용을 잃지 않는다 — 확신 없는 변환은 원본 유지 + 경고,
 수식은 어떤 규칙으로도 건드리지 않는다.
@@ -20,17 +20,18 @@ def test_simple_table_becomes_pipe():
     assert lines[2] == "| 1 | 2 |"
 
 
-def test_rowspan_colspan_expand_without_losing_content():
-    # Table 2 실측 축소판: rowspan 헤더 + colspan 그룹 헤더
+def test_rowspan_colspan_merge_into_one_header_row():
+    # Table 2 실측 축소판: rowspan 헤더 + colspan 그룹 헤더.
+    # 값 복제는 각 열이 그 값을 가진 것처럼 읽혀 #40에서 폐기했다.
     html = ('<table><tr><td rowspan="2">Model</td><td colspan="2">BLEU</td></tr>'
             "<tr><td>EN-DE</td><td>EN-FR</td></tr>"
             "<tr><td>Base</td><td>27.3</td><td>38.1</td></tr></table>")
     md, notes = refine(html)
     assert notes == []
     lines = md.strip().splitlines()
-    assert lines[0] == "| Model | BLEU | BLEU |"  # colspan 복제 전개
-    assert lines[2] == "| Model | EN-DE | EN-FR |"  # rowspan 복제 전개
-    assert lines[3] == "| Base | 27.3 | 38.1 |"
+    assert lines[0] == "| Model | BLEU EN-DE | BLEU EN-FR |"  # 헤더 2행을 열별로 합침
+    assert lines[2] == "| Base | 27.3 | 38.1 |"
+    assert len(lines) == 3
 
 
 def test_unparseable_table_kept_as_is_with_warning():
@@ -202,3 +203,135 @@ def test_clean_markdown_gets_no_html_warning():
 def test_converted_table_leaves_no_html_warning():
     _, notes = refine("<table><tr><td>A</td></tr><tr><td>1</td></tr></table>")
     assert notes == []
+
+
+# ---------- R2 author-year 경로 (#40) ----------
+
+AY_REFS = (
+    "\n\n## References\n\n"
+    "G. Starace, O. Jaffe, and T. Patwardhan. Paperbench. In ICML, 2025.\n\n"
+    "S. Schmidgall and M. Moor. AgentRxiv. arXiv preprint arXiv:2503.18102, 2025.\n\n"
+    "S. Schmidgall, Y. Su, Z. Wang, and E. Barsoum. Agent laboratory. In EMNLP, 2025.\n\n"
+    "G. Chen, F. Meng, and X. Zhao. Beyondswe. arXiv preprint arXiv:2603.03194, 2026a.\n\n"
+    "J. Chen, B. D. Mishra, and J. Yoon. Mars. arXiv preprint arXiv:2602.02660, 2026b.\n\n"
+    "OpenAI. Introducing upgrades to codex. https://openai.com/index/x, 2025.\n"
+)
+
+
+def test_author_year_citation_becomes_a_slug_link():
+    md, _ = refine("On PaperBench (Starace et al., 2025) we see." + AY_REFS)
+    assert "([Starace et al., 2025](#starace-et-al-2025))" in md
+    assert "###### Starace et al. 2025" in md
+
+
+def test_author_year_group_linked_individually():
+    md, _ = refine("prior work (Starace et al., 2025; OpenAI, 2025)." + AY_REFS)
+    assert "[Starace et al., 2025](#starace-et-al-2025)" in md
+    assert "[OpenAI, 2025](#openai-2025)" in md
+
+
+def test_year_suffix_distinguishes_same_surname():
+    md, _ = refine("see (Chen et al., 2026a) and (Chen et al., 2026b)." + AY_REFS)
+    assert "[Chen et al., 2026a](#chen-et-al-2026a)" in md
+    assert "[Chen et al., 2026b](#chen-et-al-2026b)" in md
+    assert "###### Chen et al. 2026a" in md and "###### Chen et al. 2026b" in md
+
+
+def test_two_author_and_et_al_resolve_to_different_entries():
+    # 실측 충돌: Schmidgall 2025 항목이 둘이다. 저자 수 신호로 갈라야 하고,
+    # 틀린 곳으로 점프하는 링크는 점프 안 하는 링크보다 나쁘다.
+    md, _ = refine("(Schmidgall and Moor, 2025) vs (Schmidgall et al., 2025)." + AY_REFS)
+    assert "[Schmidgall and Moor, 2025](#schmidgall-and-moor-2025)" in md
+    assert "[Schmidgall et al., 2025](#schmidgall-et-al-2025)" in md
+    body, refs = md.split("## References")
+    assert "###### Schmidgall and Moor 2025\nS. Schmidgall and M. Moor." in refs
+    assert "###### Schmidgall et al. 2025\nS. Schmidgall, Y. Su," in refs
+
+
+def test_unresolvable_citation_stays_plain_and_is_counted():
+    md, notes = refine("nobody wrote (Nonesuch et al., 1999) here." + AY_REFS)
+    assert "(Nonesuch et al., 1999)" in md and "](#" not in md.split("## References")[0]
+    (note,) = [n for n in notes if "citation" in n]
+    assert "1" in note
+
+
+def test_citations_in_an_appendix_after_references_are_linked():
+    # 이 논문은 부록이 References 뒤에 온다 — 거기 인용도 본문이다 (#40)
+    md, _ = refine("intro (OpenAI, 2025)." + AY_REFS
+                   + "\n## A. Appendix\n\nmore (Starace et al., 2025).\n")
+    appendix = md.split("## A. Appendix")[1]
+    assert "[Starace et al., 2025](#starace-et-al-2025)" in appendix
+
+
+def test_reference_entries_are_not_linked_to_themselves():
+    md, _ = refine("body (OpenAI, 2025)." + AY_REFS)
+    refs = md.split("## References")[1]
+    assert "](#openai-2025)" not in refs
+
+
+def test_references_with_no_linked_citation_warns():
+    # 이 논문에서 실제로 벌어진 일 — R2가 조용히 아무것도 안 했다
+    _, notes = refine("no citations at all here." + AY_REFS)
+    assert [n for n in notes if "citation" in n and "0" in n]
+
+
+def test_numbered_path_still_wins_when_entries_are_numbered():
+    md, notes = refine("As shown in [1], attention works." + REFS)
+    assert "[[1](#1)]" in md and "###### [1]\nFirst paper." in md
+    assert "-et-al-" not in md
+
+
+# ---------- R1 병합 셀 표현 (#40) ----------
+
+def test_two_row_header_is_joined_into_one():
+    # Table 1 실측 축소판: rowspan 헤더 + colspan 그룹 헤더
+    html = ('<table><tr><td rowspan="2">Task Name</td><td>GPT-5.5</td>'
+            '<td colspan="2">Gemini-3-Flash</td></tr>'
+            "<tr><td>Codex</td><td>BasicAgent</td><td>IterAgent</td></tr>"
+            "<tr><td>bam</td><td>56.65</td><td>48.46</td><td>45.04</td></tr></table>")
+    md, _ = refine(html)
+    lines = md.strip().splitlines()
+    assert lines[0] == ("| Task Name | GPT-5.5 Codex | Gemini-3-Flash BasicAgent "
+                        "| Gemini-3-Flash IterAgent |")
+    assert lines[2] == "| bam | 56.65 | 48.46 | 45.04 |"
+    assert len(lines) == 3  # 헤더 1행 + 구분선 + 본문 1행
+
+
+def test_body_colspan_value_appears_once_not_repeated():
+    # Table 2 실측: 구간 구분 행이 8번 반복돼 보였다
+    html = ('<table><tr><td>Agent</td><td>Model</td><td>Any Medal</td></tr>'
+            '<tr><td colspan="3">Official Leaderboard Results</td></tr>'
+            "<tr><td>MARS</td><td>Gemini</td><td>74.24</td></tr></table>")
+    md, _ = refine(html)
+    lines = md.strip().splitlines()
+    assert lines[2] == "| Official Leaderboard Results |  |  |"
+    assert lines[2].count("Official") == 1
+
+
+def test_body_rowspan_value_appears_once():
+    html = ('<table><tr><td>Group</td><td>Value</td></tr>'
+            '<tr><td rowspan="2">A</td><td>1</td></tr>'
+            "<tr><td>2</td></tr></table>")
+    md, _ = refine(html)
+    lines = md.strip().splitlines()
+    assert lines[2] == "| A | 1 |"
+    assert lines[3] == "|  | 2 |"
+
+
+def test_merged_cells_lose_no_content():
+    html = ('<table><tr><td rowspan="2">Model</td><td colspan="2">BLEU</td></tr>'
+            "<tr><td>EN-DE</td><td>EN-FR</td></tr>"
+            "<tr><td>Base</td><td>27.3</td><td>38.1</td></tr></table>")
+    md, _ = refine(html)
+    for value in ("Model", "BLEU", "EN-DE", "EN-FR", "Base", "27.3", "38.1"):
+        assert value in md
+
+
+def test_single_header_row_colspan_is_not_repeated():
+    # Table 3 실측: 헤더가 한 행이고 colspan="2"라 "Writer | Writer"로 반복됐다
+    html = ('<table><tr><td>Artifact</td><td colspan="2">Writer</td><td>Readers</td></tr>'
+            "<tr><td>a.md</td><td>Paper</td><td>Comp</td><td>All</td></tr></table>")
+    md, _ = refine(html)
+    lines = md.strip().splitlines()
+    assert lines[0] == "| Artifact | Writer |  | Readers |"
+    assert lines[2] == "| a.md | Paper | Comp | All |"
