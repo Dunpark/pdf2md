@@ -19,7 +19,8 @@ _INLINE_MATH_RE = re.compile(r"\$[^$\n]*\$")
 _CITATION_RE = re.compile(r"\[(\d+(?:,\s*\d+)*)\]")
 _REF_HEADING_RE = re.compile(r"^#{1,6}\s+References\s*$")
 _REF_ENTRY_RE = re.compile(r"^\[(\d+)\]\s")
-_NUMBERED_HEADING_RE = re.compile(r"^## (\d+(?:\.\d+)*)( .*)$")
+# 논문마다 번호 서식이 다르다 (#36): "3.1"·"3.1."(끝점)·"A.1."(부록 문자).
+_NUMBERED_HEADING_RE = re.compile(r"^## ((?:\d+|[A-Z])(?:\.\d+)*\.?)( .*)$")
 
 
 def refine(markdown: str) -> tuple[str, list[str]]:
@@ -163,8 +164,10 @@ def _link_citations(md: str) -> str:
 
 def _fix_heading_depth(md: str) -> str:
     def _deepen(m: re.Match) -> str:
-        depth = 2 + m.group(1).count(".")
-        return "#" * depth + f" {m.group(1)}{m.group(2)}"
+        label = m.group(1)
+        # 끝점은 구분자가 아니다 — "3.1."도 "3.1"과 같은 2단계다
+        depth = 2 + label.rstrip(".").count(".")
+        return "#" * depth + f" {label}{m.group(2)}"
 
     return "\n".join(
         _NUMBERED_HEADING_RE.sub(_deepen, line) for line in md.split("\n")
