@@ -267,3 +267,17 @@ def test_no_markdown_syntax_survives(tmp_path):
     assert sum(1 for b in doc.blocks if b["type"] == "image") == 1
     assert sum(1 for b in doc.blocks if b["type"] == "equation") == 1
     assert sum(1 for b in doc.blocks if b["type"] == "table") == 1
+
+
+# ---------- 페이지 제목 (#25) ----------
+
+def test_first_h1_becomes_doc_title(tmp_path):
+    doc = to_blocks("preamble text\n\n# My Paper Title\n\nbody\n\n# Second H1\n", tmp_path)
+    assert doc.title == "My Paper Title"  # 첫 h1만 — 뒤의 h1은 제목이 아니다
+    # h1 블록 자체는 그대로 업로드된다 (무손실 원칙, 제목은 메타데이터일 뿐)
+    assert any(b["type"] == "heading_1" for b in doc.blocks)
+
+
+def test_no_h1_leaves_title_empty(tmp_path):
+    doc = to_blocks("just a paragraph\n\n## section\n", tmp_path)
+    assert doc.title == ""
