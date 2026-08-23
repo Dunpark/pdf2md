@@ -18,6 +18,25 @@ class MineruApiError(Pdf2mdError):
     """MinerU API 경계 전용 — httpx 예외·API 오류 응답을 이 타입으로 감싼다 (#3)."""
 
 
+class NotionApiError(Pdf2mdError):
+    """Notion API 경계 전용 — httpx 예외·API 오류 응답을 이 타입으로 감싼다 (#17)."""
+
+
+@dataclass
+class NotionDoc:
+    """notion_blocks.to_blocks의 산출물이자 notion_upload.upload의 입력 (#16·#17 계약).
+
+    모든 한도 검사는 to_blocks 안에서 끝난다 — upload 시점에 남는 실패는
+    네트워크·권한·429뿐이어야 한다 (PLAN.md Notion 경로).
+    """
+
+    blocks: list[dict]                     # 1단계 자식, append 순서 그대로
+    images: list[tuple[int, Path]]         # blocks 인덱스 → 로컬 이미지 경로
+    citations: list[tuple[int, int, str]]  # (블록 인덱스, rich_text 인덱스, 참조번호)
+    ref_targets: dict[str, int]            # 참조번호 → 블록 인덱스
+    warnings: list[str]
+
+
 @dataclass
 class Violation:
     """Gate A가 감지한 손실 하나. 사용자가 원본 PDF에서 찾아갈 수 있어야 한다."""
@@ -86,5 +105,26 @@ if __name__ == "__main__":
     assert "page 4" in report and "page 6" in report  # page_idx는 0부터 → 사람에게는 +1
     assert "block 12" in report and "block 20" in report
     assert "table_body and img_path both empty" in report
+
+    # Notion 타입 (#18): NotionApiError는 Pdf2mdError로 잡을 수 있어야 한다
+    assert issubclass(NotionApiError, Pdf2mdError)
+    try:
+        raise NotionApiError("notion boom")
+    except Pdf2mdError as e:
+        assert "notion boom" in str(e)
+
+    # NotionDoc: 계약이 고정한 다섯 필드 (#16·#17·#18 공통)
+    doc = NotionDoc(
+        blocks=[{"type": "paragraph"}],
+        images=[(0, Path("images/x.jpg"))],
+        citations=[(3, 1, "18")],
+        ref_targets={"18": 7},
+        warnings=["clamped #### to heading_3"],
+    )
+    assert doc.blocks[0]["type"] == "paragraph"
+    assert doc.images[0] == (0, Path("images/x.jpg"))
+    assert doc.citations[0] == (3, 1, "18")
+    assert doc.ref_targets["18"] == 7
+    assert doc.warnings == ["clamped #### to heading_3"]
 
     print("strict.py self-check passed")
