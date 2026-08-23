@@ -226,6 +226,71 @@ def test_notion_flag_without_url_asks_url_only(tmp_path, monkeypatch):
     assert uploaded["url"] == "https://notion.so/x"
 
 
+# ---------- #31: md 입력 → 바로 Notion 업로드 ----------
+
+def _run_main_md_in(tmp_path: Path, argv_tail: list[str], **kw) -> tuple[int, dict]:
+    """output/ 레이아웃 그대로 md+images를 만들어 md 입력으로 main을 태운다."""
+    md = tmp_path / "out" / "paper.md"
+    md.parent.mkdir()
+    md.write_text("# edited md\n\n![](images/t.jpg)\n", encoding="utf-8")
+    (md.parent / "images").mkdir()
+    (md.parent / "images" / "t.jpg").write_bytes(b"jpg")
+    old = os.getcwd()
+    os.chdir(tmp_path)
+    try:
+        return main([str(md)] + argv_tail, **kw), {"md": md}
+    finally:
+        os.chdir(old)
+
+
+def test_md_input_uploads_without_parsing(tmp_path):
+    # 파싱·Gate A·정제·output 조립 없이 파일 내용이 그대로 변환기로 들어간다
+    calls = {}
+
+    def fake_to_blocks(md_text, image_dir):
+        calls["md"] = md_text
+        calls["image_dir"] = image_dir
+        return _fake_doc()
+
+    code, paths = _run_main_md_in(
+        tmp_path, ["--notion", "https://notion.so/x"],
+        to_blocks=fake_to_blocks,
+        upload=lambda doc, url, **kw: calls.setdefault("url", url),
+        count_children=lambda url, **kw: 0)
+    assert code == 0
+    assert calls["md"] == paths["md"].read_text(encoding="utf-8")  # 편집본 그대로
+    assert calls["image_dir"] == paths["md"].parent / "images"  # md 옆 images/
+    assert calls["url"] == "https://notion.so/x"
+    assert not (tmp_path / "cache").exists()  # MinerU·캐시는 안 탄다
+    assert not (tmp_path / "output").exists()  # 재조립도 없다
+
+
+def test_md_input_with_md_flag_is_usage_error(tmp_path):
+    code, _ = _run_main_md_in(tmp_path, ["--md"])
+    assert code == 2  # md→md는 무의미 — usage로 알려준다
+
+
+def test_md_input_interactive_asks_url_only(tmp_path, monkeypatch):
+    # md 입력은 갈 곳이 Notion뿐 — 대상 질문 없이 URL만 묻는다
+    asked = []
+    monkeypatch.setattr("builtins.input",
+                        lambda prompt="": asked.append(prompt) or "https://notion.so/x")
+    uploaded = {}
+    code, _ = _run_main_md_in(
+        tmp_path, [],
+        to_blocks=lambda md, image_dir: _fake_doc(),
+        upload=lambda doc, url, **kw: uploaded.setdefault("url", url),
+        count_children=lambda url, **kw: 0)
+    assert code == 0
+    assert len(asked) == 1
+    assert uploaded["url"] == "https://notion.so/x"
+
+
+def test_md_input_usage_mentions_md_form(capsys):
+    main([])
+    assert "<file.md>" in capsys.readouterr().err  # usage만 보고도 md→notion 여정이 보인다
+
+
 # ---------- #28: 자기설명적 CLI 여정 ----------
 
 def test_usage_block_lists_all_forms(capsys):
