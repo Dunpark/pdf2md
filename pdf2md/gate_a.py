@@ -37,6 +37,14 @@ _FURNITURE_TYPES = frozenset({"page_number"})
 # 숫자 부호(-0.5)·단어 사이 하이픈(adaptive-pruning)은 걸리지 않는다.
 _SPLIT_CELL_RE = re.compile(r">\s*([^<>]*[^\W\d_]-)\s*<")
 
+# 문서가 스스로 서식을 가리키는 어휘 (#40). MinerU 응답 어디에도 스타일 정보가
+# 없으므로(PLAN Phase 2 P6, 2026-08-23 재확인) 복원은 불가능하고, 독자는 파일이
+# 보여줄 수 없는 것을 찾으라는 안내를 읽게 된다. 실측: 신규 논문 표 캡션 2곳에서
+# 5건 적중, Attention 논문 0건 — 말뭉치 기준 오탐 없음.
+_STYLE_REF_RE = re.compile(
+    r"\b(bold|bolded|underlined|italic|italics)\b|\b(?:red|blue|green) values?\b"
+    r"|\bin (?:red|blue|green)\b", re.IGNORECASE)
+
 # 커버리지 프로브 길이. 짧을수록 오탐(우연히 md 어딘가와 일치)이 늘고,
 # 길수록 md의 재조판(줄바꿈·하이픈 제거)에 걸려 미탐이 는다. 실측 두 논문에서
 # 40자가 오탐 0·미탐 0이었다.
@@ -46,6 +54,19 @@ _PROBE_LEN = 40
 def _blank(block: dict, key: str) -> bool:
     """외부 입력이라 키가 없거나 None일 수 있다 — 전부 빈 것으로 취급한다."""
     return not str(block.get(key) or "").strip()
+
+
+def _scannable_text(block: dict) -> str:
+    """블록이 담은 사람이 읽는 텍스트 전부 — 본문 text + 캡션·각주 리스트."""
+    parts = [str(block.get("text") or "")]
+    for key in ("table_caption", "table_footnote", "image_caption",
+                "image_footnote", "chart_caption", "chart_footnote"):
+        value = block.get(key)
+        if isinstance(value, list):
+            parts += [str(x) for x in value]
+        elif value:
+            parts.append(str(value))
+    return " ".join(parts)
 
 
 def _alnum(text: str) -> str:
@@ -120,6 +141,18 @@ def gate_a(content_list: list[dict], markdown: str = "") -> list[Violation]:
         # (PLAN 구스키마의 content 키도 계속 인정. 둘 다 비어야 소실)
         elif btype == "equation" and _blank(block, "content") and _blank(block, "text"):
             violations.append(Violation("equation lost", page_idx=page, block_index=i))
+
+        # 조건 9: 문서가 서식을 가리키지만 마크다운은 그것을 보여줄 수 없다 (#40).
+        # 실측에서 이 안내는 전부 표 캡션에 있었다 — text 키만 보면 놓친다.
+        found = {m.group(0).lower()
+                 for m in _STYLE_REF_RE.finditer(_scannable_text(block))}
+        if found:
+            violations.append(Violation(
+                "styling not preserved", page_idx=page, block_index=i,
+                severity="warning",
+                detail=f"text refers to {', '.join(sorted(found))} — MinerU discards "
+                       "bold/italic/underline/colour, so the markdown cannot show it",
+            ))
 
         # 조건 6: JSON에는 있는데 md에는 없는 텍스트 (#36)
         if md_alnum and btype not in _FURNITURE_TYPES:

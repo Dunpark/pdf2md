@@ -211,3 +211,24 @@ def test_all_measured_types_are_known():
                "content": "c", "table_body": "<table><tr><td>c</td></tr></table>"}
               for t in measured]
     assert [v for v in gate_a(blocks) if v.condition == "unknown block type"] == []
+
+
+# ---------- 조건 9: 문서가 가리키는 스타일을 md가 보여줄 수 없다 (#40) ----------
+
+def test_document_referring_to_styling_is_warned():
+    # 실측: Table 1 캡션이 "red values indicate ...", "Bold and underlined denote ..."
+    # 라고 안내하는데 MinerU 응답 어디에도 스타일 정보가 없다 (P6).
+    blocks = [{"type": "text", "page_idx": 5,
+               "text": "Bold and underlined denote the best results; "
+                       "red values indicate gains."}]
+    (v,) = [x for x in gate_a(blocks) if x.condition == "styling not preserved"]
+    assert v.severity == "warning"
+    assert v.page_idx == 5
+    assert "bold" in v.detail.lower() and "underlined" in v.detail.lower()
+
+
+def test_no_styling_words_no_warning():
+    # "bolder"는 bold가 아니다 — 단어 경계로 오탐을 막는다
+    blocks = [{"type": "text", "page_idx": 0,
+               "text": "plain prose with a bolder claim and no formatting talk."}]
+    assert [x for x in gate_a(blocks) if x.condition == "styling not preserved"] == []

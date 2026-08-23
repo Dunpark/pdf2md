@@ -45,7 +45,7 @@ gh issue list --repo Dunpark/pdf2md --state all --limit 10
 python -m pdf2md "pdfs/Attention is all you need.pdf" --md     # → Gate A 경고 7건 → output/{stem}.md + images/
                                                           #   캐시 히트 시 0.4s·네트워크 없음
 python -m pdf2md "pdfs/Attention is all you need.pdf" --notion <page-url>  # → 위 + Notion 페이지 append
-python -m pytest tests/ -q                        # → 126 passed
+python -m pytest tests/ -q                        # → 142 passed
 
 python -m pdf2md.strict                           # → self-check passed, exit 0
 python -m pdf2md.mineru_api                       # → self-check passed (MockTransport, 네트워크 안 탐)
@@ -124,6 +124,7 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 | 〃 | #31 md 입력 → 바로 Notion 업로드 추가 — `--md`로 뽑은 md를 편집한 뒤 재해석 없이 올리는 경로. 파싱·Gate A·정제 건너뜀. 실전 업로드 육안 판정 대기 |
 | 〃 | #36 2편째 논문 투입 → Gate A는 `OK`인데 출력 깨짐. 원인 3건 확정(md 생성 단계의 블록 유실·셀 중간 절단·절 번호 서식 편차). Gate A에 커버리지·절단·미지타입 검사 신설, R3를 끝점·부록 문자까지 확장 (PLAN Phase 2 "논문 간 편차") |
 | 〃 | #38 출력 md의 마지막 HTML(`<sup>`) 제거 — 뷰어가 "contains HTML"로 코드 모드를 강제해 문서 편집이 막혔다. R4(위첨자 해제)·R5(잔존 HTML 경고) 신설, 수식 회피 로직을 `_sub_outside_math`로 공유 (§11.9) |
+| 〃 | #40 사용자 육안 검증 3건 — 인용 점프 불가(author-year 서식)·서식(볼드·색) 부재·병합 셀 반복. 셋 다 경고 없이 나갔다. R2에 author-year 경로(실측 84/84 해결, 부록 포함)·R1에 병합 셀 앵커 표현과 다중 행 헤더 합치기·Gate A에 서식 안내 경고를 넣었다. P6은 재확인 후 유지 |
 
 ### v2 변경의 파급
 
@@ -162,6 +163,7 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 | 7 | #19 | 인용 점프 링크 + PLAN v3 (**실전 업로드의 사용자 판정 필요**) |
 | — | #36 | 논문 간 편차 대응 — Gate A 커버리지·셀 절단·미지타입 검사, R3 번호 서식 확장 |
 | — | #38 | 출력 md에서 HTML 제거 — R4 위첨자 해제 · R5 잔존 HTML 경고 |
+| — | #40 | author-year 인용 링크 · 병합 셀 표현 · 서식 소실 경고 |
 
 **병렬 wave가 성립하는 조건은 두 가지뿐이다** — 모듈이 서로를 임포트하지 않고,
 서로 다른 파일을 소유한다. 공유 타입은 병렬 시작 전에 먼저 존재해야 한다: Wave 2는
@@ -294,7 +296,7 @@ Python  3.13.15
 ```bash
 python -m pdf2md.strict                          # strict.py 자체 점검 — passed, exit 0
 python -m pdf2md.mineru_api                      # API 클라이언트 자체 점검 (MockTransport) — passed
-python -m pytest tests/ -q                       # 루트 스위트 — 126 passed
+python -m pytest tests/ -q                       # 루트 스위트 — 142 passed
 python -m pdf2md "pdfs/Attention is all you need.pdf" --md      # 끝까지 — 경고 7건, halt 없이 output/ 조립
 python -m pdf2md "pdfs/Toward Autonomous Long-Horizon Engineering for ML Research.pdf" --md  # 2편째 — 경고 5건
 python -m pdf2md "pdfs/Attention is all you need.pdf" --notion <page-url>  # 위 + Notion append (실 API)
@@ -362,7 +364,19 @@ CI가 없다. 모든 검증은 로컬에서 수동으로 이뤄진다.
 15. **표가 비어 있지 않아도 깨져 있을 수 있다.** MinerU가 줄바꿈 하이픈을 셀 경계로
     오인해 "Paper Comprehension"을 `<td>Paper sion</td><td>Comprehen-</td>`로 쪼갠
     실측이 있다. 격자는 직사각형이고 값도 비지 않아 빈값 검사로는 원리적으로 못 잡는다.
-16. **절 번호 서식은 논문마다 다르다.** `3.1`·`3.1.`(끝점)·`A.1.`(부록 문자)가 전부
+16. **인용·참조 서식도 논문마다 다르다.** 숫자형 `[18]`만 있는 게 아니라
+    author-year `(Starace et al., 2025)`가 있고, **부록이 References 뒤에 오는
+    논문이 있다** — 본문 범위를 "References 앞"으로 잡으면 부록 인용을 통째로
+    놓친다(실측 84개 중 49개). 같은 성·같은 해 항목이 둘인 경우도 실재하므로
+    (`Schmidgall 2025`) 좁혀지지 않으면 링크하지 않는다 (#40).
+17. **표는 셀이 병합돼 있고 마크다운은 그것을 표현하지 못한다.** 값을 병합 범위에
+    복제하면 각 열이 그 값을 가진 것처럼 읽힌다. 앵커 칸에만 두고 다중 행 헤더는
+    한 행으로 합친다 (#40). `<table>`로 되돌리는 선택지는 §11.9 때문에 없다.
+18. **문서가 자기 서식을 설명하는 일이 있다** — "red values indicate ...",
+    "Bold and underlined denote ...". MinerU는 서식을 안 주므로(P6) 독자는 파일이
+    보여줄 수 없는 것을 찾게 된다. 이 안내는 대개 **표 캡션**에 있어서
+    `text` 키만 봐서는 안 잡힌다 (#40).
+19. **절 번호 서식은 논문마다 다르다.** `3.1`·`3.1.`(끝점)·`A.1.`(부록 문자)가 전부
     나온다. 헤딩 정규식을 좁게 쓰면 조용히 아무것도 안 하고 문서가 통째로 평탄화된다 —
     실제로 #36에서 그렇게 됐다. 새 규칙은 두 캐시 논문 모두에 돌려보고 확정한다.
 
