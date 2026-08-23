@@ -15,6 +15,7 @@ import re
 from html.parser import HTMLParser
 
 _TABLE_RE = re.compile(r"<table\b.*?</table>", re.DOTALL | re.IGNORECASE)
+_FIRST_CELL_RE = re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", re.DOTALL | re.IGNORECASE)
 _INLINE_MATH_RE = re.compile(r"\$[^$\n]*\$")
 _CITATION_RE = re.compile(r"\[(\d+(?:,\s*\d+)*)\]")
 _REF_HEADING_RE = re.compile(r"^#{1,6}\s+References\s*$")
@@ -34,10 +35,17 @@ _SUP_DIGITS = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
 _HTML_TAG_RE = re.compile(r"</?([a-zA-Z][a-zA-Z0-9]*)(?:\s[^<>]*)?/?>")
 
 
-def refine(markdown: str) -> tuple[str, list[str]]:
-    """R1(표) → R2(참조 링크) → R3(헤딩 깊이) → R4(위첨자) → R5(잔존 HTML) 순."""
+def refine(markdown: str, table_images: list[str] | None = None,
+           table_bodies: list[str] | None = None) -> tuple[str, list[str]]:
+    """R1(표) → R2(참조 링크) → R3(헤딩 깊이) → R4(위첨자) → R5(잔존 HTML) 순.
+
+    table_images는 content_list의 표 블록 순서대로인 `img_path` 목록이다 (#42).
+    주면 표를 그 렌더 이미지로 바꾸고, 없으면 종전대로 파이프 테이블로 만든다
+    (md 직접 입력(#31)에는 content_list가 없다). table_bodies를 함께 주면
+    각 표의 첫 셀을 대조해 짝이 맞는지 확인한다.
+    """
     notes: list[str] = []
-    md = _convert_tables(markdown, notes)
+    md = _convert_tables(markdown, notes, table_images, table_bodies)
     md = _link_citations(md, notes)
     md = _fix_heading_depth(md)
     md = _unwrap_superscripts(md, notes)
@@ -169,15 +177,48 @@ def _table_to_pipe(html: str) -> str:
     return "\n".join(out)
 
 
-def _convert_tables(md: str, notes: list[str]) -> str:
-    def _sub(m: re.Match) -> str:
+def _first_cell(html: str) -> str | None:
+    """표의 첫 셀 텍스트 — md의 표와 content_list의 표가 같은 표인지 대조하는 열쇠."""
+    m = _FIRST_CELL_RE.search(html)
+    return " ".join(re.sub(r"<[^>]+>", "", m.group(1)).split()) if m else None
+
+
+def _convert_tables(md: str, notes: list[str], images: list[str] | None = None,
+                    bodies: list[str] | None = None) -> str:
+    images, bodies = images or [], bodies or []
+    order = 0
+    as_image = 0
+
+    def _pipe(html: str) -> str:
         try:
-            return _table_to_pipe(m.group(0))
+            return _table_to_pipe(html)
         except Exception as e:  # 확신 없는 변환은 하지 않는다 — 원본 유지 + 경고
             notes.append(f"table left as HTML (could not convert: {e})")
-            return m.group(0)
+            return html
 
-    return _TABLE_RE.sub(_sub, md)
+    def _sub(m: re.Match) -> str:
+        nonlocal order, as_image
+        html, i = m.group(0), order
+        order += 1
+        if i >= len(images) or not images[i]:
+            return _pipe(html)  # 짝이 없다 — 종전 경로
+        if i < len(bodies) and _first_cell(html) != _first_cell(bodies[i]):
+            # 엉뚱한 그림이 표 자리에 박히는 것은 조용한 오답이다 — 순서를 믿지 않는다
+            notes.append(f"table {i + 1}: the render image does not match the table "
+                         "(first cell differs) — kept as a pipe table")
+            return _pipe(html)
+        as_image += 1
+        return f"![]({images[i]})"
+
+    result = _TABLE_RE.sub(_sub, md)
+    if as_image:
+        # 마크다운은 병합도 볼드도 못 그리므로 원본 렌더를 쓴다. 대신 셀 텍스트가
+        # md에서 빠진다 — 검색·복사가 안 되고 Notion에도 그림으로 올라간다.
+        # 값은 cache/에 남아 있으니 규칙이 바뀌면 API 없이 되살릴 수 있다.
+        notes.append(f"{as_image} table(s) rendered as an image — merges and "
+                     "bold/underline/colour survive, but the cell text is not "
+                     "in the markdown")
+    return result
 
 
 # ---------- R2: References 미니 헤딩 + 본문 인용 링크 ----------

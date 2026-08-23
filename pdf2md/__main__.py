@@ -155,7 +155,15 @@ def main(
             # 정제(PLAN.md Phase 3)는 output에만 적용한다 — 캐시는 MinerU 원본
             # 그대로, 그래야 정제 규칙이 바뀌어도 API를 다시 태우지 않고 재생성할
             # 수 있다
-            refined_md, notes = refine(result.markdown)
+            # 표는 MinerU의 렌더 이미지로 낸다 — 마크다운은 병합도 볼드도 못 그리고,
+            # 그 이미지에는 둘 다 살아 있다 (#42). 짝은 순서로 맞추되 refine이
+            # 첫 셀을 대조해 확인한다
+            tables = [b for b in result.content_list if b.get("type") == "table"]
+            refined_md, notes = refine(
+                result.markdown,
+                table_images=[str(b.get("img_path") or "") for b in tables],
+                table_bodies=[str(b.get("table_body") or "") for b in tables],
+            )
             for note in notes:
                 print(f"refine: {note}", file=sys.stderr)
             image_dir = result.image_dir

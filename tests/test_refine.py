@@ -335,3 +335,54 @@ def test_single_header_row_colspan_is_not_repeated():
     lines = md.strip().splitlines()
     assert lines[0] == "| Artifact | Writer |  | Readers |"
     assert lines[2] == "| a.md | Paper | Comp | All |"
+
+
+# ---------- R1 표 → 렌더 이미지 (#42) ----------
+
+T1 = "<table><tr><td>Task Name</td><td>GPT-5.5</td></tr><tr><td>bam</td><td>56.65</td></tr></table>"
+T2 = "<table><tr><td>Agent</td></tr><tr><td>MARS</td></tr></table>"
+
+
+def test_table_becomes_its_render_image():
+    # 마크다운 표는 병합도 볼드도 표현 못 한다. MinerU가 준 렌더 이미지에는
+    # 둘 다 살아 있고 이미 output/images/에 있다 (#42).
+    md, notes = refine(T1, table_images=["images/t1.jpg"])
+    assert md.strip() == "![](images/t1.jpg)"
+    assert "|" not in md and "<table" not in md
+    assert [n for n in notes if "image" in n and "1" in n]
+
+
+def test_each_table_gets_its_own_image_in_order():
+    md, _ = refine(f"{T1}\n\ntext\n\n{T2}",
+                   table_images=["images/t1.jpg", "images/t2.jpg"])
+    assert md.index("images/t1.jpg") < md.index("text") < md.index("images/t2.jpg")
+
+
+def test_wrong_image_order_falls_back_to_pipe_table():
+    # 표 밑에 엉뚱한 그림이 붙는 것은 조용한 오답이다 — 첫 셀을 대조해 막는다.
+    # 대조에 쓸 원본은 table_bodies로 함께 받는다.
+    md, notes = refine(T1, table_images=["images/t1.jpg"],
+                       table_bodies=["<table><tr><td>Different</td></tr></table>"])
+    assert "images/t1.jpg" not in md
+    assert "| Task Name | GPT-5.5 |" in md  # 파이프 테이블로 되돌아간다
+    assert [n for n in notes if "does not match" in n]
+
+
+def test_matching_first_cell_passes_the_guard():
+    md, _ = refine(T1, table_images=["images/t1.jpg"], table_bodies=[T1])
+    assert md.strip() == "![](images/t1.jpg)"
+
+
+def test_without_images_the_pipe_table_is_unchanged():
+    # md 직접 입력(#31)에는 content_list가 없다 — 종전 동작 그대로여야 한다
+    md, notes = refine(T1)
+    lines = md.strip().splitlines()
+    assert lines[0] == "| Task Name | GPT-5.5 |"
+    assert lines[2] == "| bam | 56.65 |"
+    assert notes == []
+
+
+def test_fewer_images_than_tables_leaves_the_rest_as_pipe():
+    md, notes = refine(f"{T1}\n\n{T2}", table_images=["images/t1.jpg"])
+    assert "images/t1.jpg" in md
+    assert "| Agent |" in md  # 두 번째 표는 짝이 없어 파이프로
