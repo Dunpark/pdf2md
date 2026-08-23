@@ -335,3 +335,87 @@ def test_single_header_row_colspan_is_not_repeated():
     lines = md.strip().splitlines()
     assert lines[0] == "| Artifact | Writer |  | Readers |"
     assert lines[2] == "| a.md | Paper | Comp | All |"
+
+
+# ---------- R1 표: 병합이 있는 표만 렌더 이미지로 (#42) ----------
+
+# 병합이 있다 = 마크다운이 표현할 수 없다 -> 이미지로 낸다
+T_MERGED = ('<table><tr><td rowspan="2">Task Name</td>'
+            '<td colspan="2">Gemini-3-Flash</td></tr>'
+            "<tr><td>BasicAgent</td><td>IterAgent</td></tr>"
+            "<tr><td>bam</td><td>48.46</td><td>45.04</td></tr></table>")
+T2_MERGED = ('<table><tr><td colspan="2">Agent</td></tr>'
+             "<tr><td>MARS</td><td>74.24</td></tr></table>")
+# 병합이 없다 = 파이프 테이블로 충분하다. 검색·복사·셀 수식 렌더가 살아 있으므로
+# 이미지로 바꾸면 얻는 것 없이 셀 텍스트만 잃는다
+T_PLAIN = ("<table><tr><td>Layer Type</td><td>Complexity</td></tr>"
+           "<tr><td>Self-Attention</td><td> $O(n^{2})$ </td></tr></table>")
+
+
+def test_merged_table_becomes_its_render_image():
+    md, notes = refine(T_MERGED, table_images=["images/t1.jpg"])
+    assert md.strip() == "![](images/t1.jpg)"
+    assert "|" not in md and "<table" not in md
+    assert [n for n in notes if "image" in n]
+
+
+def test_plain_table_stays_a_pipe_table_even_when_an_image_exists():
+    # 병합이 없으면 파이프 테이블이 더 낫다 — 검색·복사되고 셀 수식이 렌더된다
+    md, notes = refine(T_PLAIN, table_images=["images/plain.jpg"])
+    assert "images/plain.jpg" not in md
+    assert "| Layer Type | Complexity |" in md
+    assert "$O(n^{2})$" in md  # 셀 안 수식이 md에 그대로 남는다
+    assert notes == []
+
+
+def test_mixed_document_splits_by_merge():
+    md, notes = refine(T_MERGED + "\n\ntext\n\n" + T_PLAIN,
+                       table_images=["images/t1.jpg", "images/plain.jpg"])
+    assert "![](images/t1.jpg)" in md
+    assert "| Layer Type | Complexity |" in md
+    assert "images/plain.jpg" not in md
+    (note,) = [n for n in notes if "image" in n]
+    assert "1 of 2" in note
+
+
+def test_image_index_stays_aligned_when_a_plain_table_is_skipped():
+    # 짝은 content_list의 표 순서다 — 표로 남긴 표도 자리를 차지한다
+    md, _ = refine(T_PLAIN + "\n\n" + T_MERGED,
+                   table_images=["images/plain.jpg", "images/t2.jpg"])
+    assert "![](images/t2.jpg)" in md
+    assert "images/plain.jpg" not in md
+
+
+def test_each_merged_table_gets_its_own_image_in_order():
+    md, _ = refine(T_MERGED + "\n\ntext\n\n" + T2_MERGED,
+                   table_images=["images/t1.jpg", "images/t2.jpg"])
+    assert md.index("images/t1.jpg") < md.index("text") < md.index("images/t2.jpg")
+
+
+def test_wrong_image_order_falls_back_to_pipe_table():
+    # 표 밑에 엉뚱한 그림이 붙는 것은 조용한 오답이다 — 첫 셀을 대조해 막는다
+    md, notes = refine(T_MERGED, table_images=["images/t1.jpg"],
+                       table_bodies=["<table><tr><td>Different</td></tr></table>"])
+    assert "images/t1.jpg" not in md
+    assert "| Task Name | Gemini-3-Flash BasicAgent |" in md
+    assert [n for n in notes if "does not match" in n]
+
+
+def test_matching_first_cell_passes_the_guard():
+    md, _ = refine(T_MERGED, table_images=["images/t1.jpg"], table_bodies=[T_MERGED])
+    assert md.strip() == "![](images/t1.jpg)"
+
+
+def test_without_images_the_pipe_table_is_unchanged():
+    # md 직접 입력(#31)에는 content_list가 없다 — 종전 동작 그대로여야 한다
+    md, notes = refine(T_MERGED)
+    lines = md.strip().splitlines()
+    assert lines[0] == "| Task Name | Gemini-3-Flash BasicAgent | Gemini-3-Flash IterAgent |"
+    assert lines[2] == "| bam | 48.46 | 45.04 |"
+    assert notes == []
+
+
+def test_fewer_images_than_tables_leaves_the_rest_as_pipe():
+    md, _ = refine(T_MERGED + "\n\n" + T2_MERGED, table_images=["images/t1.jpg"])
+    assert "images/t1.jpg" in md
+    assert "| Agent |" in md  # 두 번째 표는 짝이 없어 파이프로

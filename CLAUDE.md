@@ -45,7 +45,7 @@ gh issue list --repo Dunpark/pdf2md --state all --limit 10
 python -m pdf2md "pdfs/Attention is all you need.pdf" --md     # → Gate A 경고 7건 → output/{stem}.md + images/
                                                           #   캐시 히트 시 0.4s·네트워크 없음
 python -m pdf2md "pdfs/Attention is all you need.pdf" --notion <page-url>  # → 위 + Notion 페이지 append
-python -m pytest tests/ -q                        # → 142 passed
+python -m pytest tests/ -q                        # → 151 passed
 
 python -m pdf2md.strict                           # → self-check passed, exit 0
 python -m pdf2md.mineru_api                       # → self-check passed (MockTransport, 네트워크 안 탐)
@@ -125,6 +125,7 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 | 〃 | #36 2편째 논문 투입 → Gate A는 `OK`인데 출력 깨짐. 원인 3건 확정(md 생성 단계의 블록 유실·셀 중간 절단·절 번호 서식 편차). Gate A에 커버리지·절단·미지타입 검사 신설, R3를 끝점·부록 문자까지 확장 (PLAN Phase 2 "논문 간 편차") |
 | 〃 | #38 출력 md의 마지막 HTML(`<sup>`) 제거 — 뷰어가 "contains HTML"로 코드 모드를 강제해 문서 편집이 막혔다. R4(위첨자 해제)·R5(잔존 HTML 경고) 신설, 수식 회피 로직을 `_sub_outside_math`로 공유 (§11.9) |
 | 〃 | #40 사용자 육안 검증 3건 — 인용 점프 불가(author-year 서식)·서식(볼드·색) 부재·병합 셀 반복. 셋 다 경고 없이 나갔다. R2에 author-year 경로(실측 84/84 해결, 부록 포함)·R1에 병합 셀 앵커 표현과 다중 행 헤더 합치기·Gate A에 서식 안내 경고를 넣었다. P6은 재확인 후 유지 |
+| 〃 | #42 **병합이 있는 표만** MinerU 렌더 이미지로 출력 — 마크다운에 병합 문법이 없고 토글도 없다(`<details>`는 HTML→코드 모드). 그 이미지에 병합·볼드·밑줄·빨간색이 전부 살아 있고 이미 `output/images/`에 있었는데 참조된 적이 없었다. 병합 없는 표는 파이프 테이블로 남긴다 — 셀 텍스트·수식·인용 링크를 잃을 이유가 없다. 판정은 `rowspan`/`colspan` 실값(실측 7개 중 5개 병합) |
 
 ### v2 변경의 파급
 
@@ -164,6 +165,7 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 | — | #36 | 논문 간 편차 대응 — Gate A 커버리지·셀 절단·미지타입 검사, R3 번호 서식 확장 |
 | — | #38 | 출력 md에서 HTML 제거 — R4 위첨자 해제 · R5 잔존 HTML 경고 |
 | — | #40 | author-year 인용 링크 · 병합 셀 표현 · 서식 소실 경고 |
+| — | #42 | 병합된 표만 렌더 이미지로 출력, 나머지는 파이프 테이블 |
 
 **병렬 wave가 성립하는 조건은 두 가지뿐이다** — 모듈이 서로를 임포트하지 않고,
 서로 다른 파일을 소유한다. 공유 타입은 병렬 시작 전에 먼저 존재해야 한다: Wave 2는
@@ -296,7 +298,7 @@ Python  3.13.15
 ```bash
 python -m pdf2md.strict                          # strict.py 자체 점검 — passed, exit 0
 python -m pdf2md.mineru_api                      # API 클라이언트 자체 점검 (MockTransport) — passed
-python -m pytest tests/ -q                       # 루트 스위트 — 142 passed
+python -m pytest tests/ -q                       # 루트 스위트 — 151 passed
 python -m pdf2md "pdfs/Attention is all you need.pdf" --md      # 끝까지 — 경고 7건, halt 없이 output/ 조립
 python -m pdf2md "pdfs/Toward Autonomous Long-Horizon Engineering for ML Research.pdf" --md  # 2편째 — 경고 5건
 python -m pdf2md "pdfs/Attention is all you need.pdf" --notion <page-url>  # 위 + Notion append (실 API)
@@ -369,14 +371,29 @@ CI가 없다. 모든 검증은 로컬에서 수동으로 이뤄진다.
     논문이 있다** — 본문 범위를 "References 앞"으로 잡으면 부록 인용을 통째로
     놓친다(실측 84개 중 49개). 같은 성·같은 해 항목이 둘인 경우도 실재하므로
     (`Schmidgall 2025`) 좁혀지지 않으면 링크하지 않는다 (#40).
-17. **표는 셀이 병합돼 있고 마크다운은 그것을 표현하지 못한다.** 값을 병합 범위에
-    복제하면 각 열이 그 값을 가진 것처럼 읽힌다. 앵커 칸에만 두고 다중 행 헤더는
-    한 행으로 합친다 (#40). `<table>`로 되돌리는 선택지는 §11.9 때문에 없다.
-18. **문서가 자기 서식을 설명하는 일이 있다** — "red values indicate ...",
+17. **마크다운에는 셀 병합도 토글도 없다.** 병합은 문법 자체가 없고, 접기는
+    `<details>`뿐인데 그것도 HTML이라 §11.9로 잠긴다. 대신 **MinerU가 표마다 원본
+    렌더 이미지를 준다** — 병합·볼드·밑줄·색이 전부 살아 있고 `img_path`로 온다.
+    #42 전까지 이 이미지들은 `output/images/`에 있으면서 md에서 한 번도 참조되지
+    않았다. **응답에 이미 있는 것을 먼저 확인할 것.**
+18. **표를 이미지로 내면 셀 텍스트가 md에서 사라진다** — 검색·복사 불가, 표 안의
+    인용 링크도 함께 사라진다. 그래서 **병합이 있는 표만** 이미지로 낸다(#42):
+    Attention 논문 인용 링크가 전량 파이프일 때 74, 전량 이미지일 때 56,
+    병합 기준으로 가르면 66이다. 값은 `cache/`에 남지만, 이 사실을 모르고 md만
+    grep하면 이미지가 된 표의 내용을 못 찾는다.
+19. **병합 판정은 추측이 아니다** — `table_body` HTML의 `rowspan`/`colspan` 실값을
+    본다(실측: 두 논문 표 7개 중 5개가 병합 있음). 다만 **서식은 판정할 수 없다** —
+    병합 없이 색으로만 의미를 나르는 표는 파이프로 나가고 색은 사라진다. 그건
+    Gate A의 `styling not preserved` 경고가 잡는다 (#40).
+20. **파이프 테이블 경로는 두 곳에서 살아 있다** — 병합 없는 표(#42), 그리고 md
+    직접 입력(#31). 거기서는 병합 값을 범위 전체에 복제하면 각 열이 그 값을 가진
+    것처럼 읽히므로 앵커 칸에만 두고, 다중 행 헤더는 한 행으로 합친다 (#40).
+    파이프 규칙을 고칠 때 "이제 표는 이미지니까 상관없다"고 넘기지 말 것.
+21. **문서가 자기 서식을 설명하는 일이 있다** — "red values indicate ...",
     "Bold and underlined denote ...". MinerU는 서식을 안 주므로(P6) 독자는 파일이
     보여줄 수 없는 것을 찾게 된다. 이 안내는 대개 **표 캡션**에 있어서
     `text` 키만 봐서는 안 잡힌다 (#40).
-19. **절 번호 서식은 논문마다 다르다.** `3.1`·`3.1.`(끝점)·`A.1.`(부록 문자)가 전부
+22. **절 번호 서식은 논문마다 다르다.** `3.1`·`3.1.`(끝점)·`A.1.`(부록 문자)가 전부
     나온다. 헤딩 정규식을 좁게 쓰면 조용히 아무것도 안 하고 문서가 통째로 평탄화된다 —
     실제로 #36에서 그렇게 됐다. 새 규칙은 두 캐시 논문 모두에 돌려보고 확정한다.
 
