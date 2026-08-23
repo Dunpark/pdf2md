@@ -19,6 +19,7 @@ import json
 import mimetypes
 import os
 import re
+import sys
 import time
 from pathlib import Path
 
@@ -33,11 +34,6 @@ MAX_BLOCKS_PER_REQUEST = 100
 MAX_REQUEST_BYTES = 500_000
 MAX_IMAGE_BYTES = 20 * 1024 * 1024  # File Upload API 단일 파트 한도
 REQUEST_INTERVAL = 0.34  # 평균 3 req/s 아래로 — 429를 만드는 것보다 싸다
-
-# 직전 upload가 append한 1단계 블록 id, 문서 순서 그대로.
-# #19(인용 → 참조 블록 링크 패치)가 ref_targets의 블록 인덱스를 실제 id로
-# 바꿀 때 쓴다. 부분 실패 시에도 성공분까지의 id는 남는다.
-appended_block_ids: list[str] = []
 
 _HEX32_RE = re.compile(r"[0-9a-f]{32}$")
 
@@ -88,12 +84,11 @@ def count_children(page_url: str, *, transport: httpx.BaseTransport | None = Non
 def upload(doc: NotionDoc, page_url: str, *, transport: httpx.BaseTransport | None = None) -> str:
     """NotionDoc을 페이지에 append하고 페이지 URL을 돌려준다.
 
-    순서: 이미지 2단계 업로드(placeholder id 채움) → 100개 배치 append.
-    transport 는 테스트 주입구 (httpx.MockTransport) — 실전에서는 넘기지 않는다.
+    순서: 이미지 2단계 업로드(placeholder id 채움) → 100개 배치 append →
+    인용 링크 패치(#19). transport 는 테스트 주입구 — 실전에서는 넘기지 않는다.
     """
     page_id = page_id_from_url(page_url)
     result_url = f"https://www.notion.so/{page_id}"
-    appended_block_ids.clear()
     if not doc.blocks:
         return result_url  # 보낼 것이 없으면 네트워크를 건드리지 않는다
 
@@ -115,6 +110,7 @@ def upload(doc: NotionDoc, page_url: str, *, transport: httpx.BaseTransport | No
                 doc.blocks[block_idx]["image"]["file_upload"]["id"] = fid
 
             # 2) 배치 append — 응답 results의 id를 문서 순서대로 모은다
+            block_ids: list[str] = []
             for i, batch in enumerate(batches):
                 try:
                     data = _send(client, "PATCH",
@@ -123,18 +119,76 @@ def upload(doc: NotionDoc, page_url: str, *, transport: httpx.BaseTransport | No
                                  json={"children": batch})
                 except NotionApiError as e:
                     raise NotionApiError(
-                        f"appended {len(appended_block_ids)} of {len(doc.blocks)} "
+                        f"appended {len(block_ids)} of {len(doc.blocks)} "
                         f"blocks before failing at batch {i + 1}/{len(batches)}: {e} "
                         f"Page: {result_url} - "
                         "delete them in Notion before rerunning, or accept duplicates."
                     ) from e
-                appended_block_ids.extend(b["id"] for b in data.get("results", []))
+                block_ids.extend(b["id"] for b in data.get("results", []))
+
+            # 3) 인용 → 참조 블록 점프 링크 (#19). 실패해도 업로드는 이미 성공 —
+            #    인용은 평문 [N]으로 읽히므로 경고만 내고 계속 간다
+            _patch_citations(client, headers, doc, page_id, block_ids)
     except httpx.HTTPError as e:
         raise NotionApiError(f"Notion request failed: {type(e).__name__}: {e}") from e
     return result_url
 
 
 # ---- 내부 ----
+
+def _warn(msg: str) -> None:
+    """CLI의 `notion: …` 관례와 같은 무늬로 stderr에 낸다.
+
+    # ponytail: HTTP 모듈이 직접 stderr를 쓴다 — upload의 시그니처(-> str)가
+    # 계약으로 고정돼 경고를 반환할 자리가 없다. 채널이 더 필요해지면 그때 뚫는다.
+    """
+    print(f"notion: {msg}", file=sys.stderr)
+
+
+def _patch_citations(client: httpx.Client, headers: dict, doc: NotionDoc,
+                     page_id: str, block_ids: list[str]) -> None:
+    """본문 인용 [N]에 References 블록으로 가는 앵커 링크를 단다 (#19).
+
+    앵커 형태는 probe 실측(2026-08-23): …/{page_id}#{블록 id 대시 제거}.
+    블록당 PATCH 한 번 — 전체 rich_text 배열을 링크 단 채로 다시 보낸다.
+    어떤 실패도 halt가 아니다: 인용 텍스트는 어느 쪽이든 살아 있다.
+    """
+    if not doc.citations:
+        return
+
+    by_block: dict[int, list[tuple[int, str]]] = {}
+    for block_idx, rt_idx, num in doc.citations:
+        by_block.setdefault(block_idx, []).append((rt_idx, num))
+
+    failed = 0
+    for block_idx, cites in sorted(by_block.items()):
+        block = doc.blocks[block_idx]
+        btype = block["type"]
+        rich = block.get(btype, {}).get("rich_text")
+        if rich is None:  # 방어 — 인용은 텍스트 블록에서만 온다 (#16이 보장)
+            _warn(f"citation in a {btype} block cannot be patched; left plain")
+            continue
+        linked = 0
+        for rt_idx, num in cites:
+            target = doc.ref_targets.get(num)
+            if target is None or target >= len(block_ids):
+                _warn(f"citation [{num}] has no reference block; left plain")
+                continue
+            anchor = (f"https://www.notion.so/{page_id}"
+                      f"#{block_ids[target].replace('-', '')}")
+            rich[rt_idx]["text"]["link"] = {"url": anchor}
+            linked += 1
+        if not linked:
+            continue
+        try:
+            _send(client, "PATCH", f"{BASE_URL}/blocks/{block_ids[block_idx]}",
+                  headers, f"citation link patch (block {block_idx})",
+                  json={btype: {"rich_text": rich}})
+        except (NotionApiError, httpx.HTTPError):
+            failed += 1
+    if failed:
+        _warn(f"citation link patch failed for {failed} block(s); "
+              "those citations stay readable plain text")
 
 def _headers() -> dict[str, str]:
     """토큰은 여기서 lazy하게 읽는다 — .env 없는 worktree에서 임포트가 죽으면 안 된다."""
