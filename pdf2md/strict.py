@@ -35,6 +35,7 @@ class NotionDoc:
     citations: list[tuple[int, int, str]]  # (블록 인덱스, rich_text 인덱스, 참조번호)
     ref_targets: dict[str, int]            # 참조번호 → 블록 인덱스
     warnings: list[str]
+    title: str = ""                        # 첫 h1 = 논문 제목. 페이지 제목 설정용 (#25)
 
 
 @dataclass
@@ -120,7 +121,10 @@ if __name__ == "__main__":
         citations=[(3, 1, "18")],
         ref_targets={"18": 7},
         warnings=["clamped #### to heading_3"],
+        title="Attention Is All You Need",
     )
+    assert doc.title == "Attention Is All You Need"
+    assert NotionDoc([], [], [], {}, []).title == ""  # 기본값 — 기존 생성부 호환
     assert doc.blocks[0]["type"] == "paragraph"
     assert doc.images[0] == (0, Path("images/x.jpg"))
     assert doc.citations[0] == (3, 1, "18")

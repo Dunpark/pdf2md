@@ -341,3 +341,51 @@ def test_citation_without_target_is_left_plain_with_warning(capsys):
     nu.upload(doc, PAGE_URL, transport=httpx.MockTransport(cite_handler(patches)))
     assert patches == {}  # 링크할 대상이 없으면 패치도 없다
     assert "notion:" in capsys.readouterr().err
+
+
+# ---- 페이지 제목 설정 (#25) ----
+
+def titled_doc(title="Attention Is All You Need") -> NotionDoc:
+    doc = make_doc([para("body")])
+    doc.title = title
+    return doc
+
+
+def page_handler(existing_title: str, calls: dict):
+    """GET/PATCH /pages/{id}를 기록하고, append는 정상 처리하는 핸들러."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if "/pages/" in url and request.method == "GET":
+            calls["get"] = calls.get("get", 0) + 1
+            rt = ([{"type": "text", "text": {"content": existing_title}}]
+                  if existing_title else [])
+            return httpx.Response(200, json={"properties": {"title": {"title": rt}}})
+        if "/pages/" in url and request.method == "PATCH":
+            calls["patch"] = json.loads(request.content)
+            return httpx.Response(200, json={})
+        if url.endswith("/children") and request.method == "PATCH":
+            return append_ok(request)
+        raise AssertionError(f"unexpected request: {request.method} {url}")
+    return handler
+
+
+def test_empty_page_title_is_set_with_prefix():
+    calls: dict = {}
+    nu.upload(titled_doc(), PAGE_URL, transport=httpx.MockTransport(page_handler("", calls)))
+    got = calls["patch"]["properties"]["title"]["title"][0]["text"]["content"]
+    assert got == "[\ub17c\ubb38] Attention Is All You Need"  # "[논문] " 접두
+
+
+def test_existing_page_title_is_left_untouched(capsys):
+    calls: dict = {}
+    nu.upload(titled_doc(), PAGE_URL,
+              transport=httpx.MockTransport(page_handler("My Manual Title", calls)))
+    assert "patch" not in calls  # 사용자가 지정한 제목을 덮지 않는다
+    assert "notion:" in capsys.readouterr().err
+
+
+def test_doc_without_title_makes_no_page_requests():
+    calls: dict = {}
+    nu.upload(titled_doc(title=""), PAGE_URL,
+              transport=httpx.MockTransport(page_handler("", calls)))
+    assert calls == {}  # h1이 없으면 /pages는 아예 건드리지 않는다

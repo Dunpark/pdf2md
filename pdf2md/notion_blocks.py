@@ -97,6 +97,8 @@ def to_blocks(md: str, image_dir: Path) -> NotionDoc:
         m = _HEADING_RE.match(line)
         if m:
             depth = len(m.group(1))
+            if depth == 1 and not doc.title:
+                doc.title = m.group(2)  # 첫 h1 = 논문 제목 — 페이지 제목 설정용 (#25)
             if depth > 3:
                 doc.warnings.append(
                     f"clamped {'#' * depth} heading to heading_3: {m.group(2)[:40]}")
