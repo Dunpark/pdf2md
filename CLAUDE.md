@@ -30,7 +30,7 @@ gh issue list --repo Dunpark/pdf2md --state all --limit 10
 | 3 | `.env`에 키 2개 | `2` |
 | 4 | PLAN 개정 버전 | `v3` |
 | 5 | 리모트 | `origin → Dunpark/pdf2md` |
-| 6 | 티켓 | `#1`~`#7`·`#13`·`#15`~`#19`·`#25`·`#28`·`#30`·`#31`·`#34`·`#36`이 존재하고 제목이 `TICKET-NNN` 형식 |
+| 6 | 티켓 | `#1`~`#7`·`#13`·`#15`~`#19`·`#25`·`#28`·`#30`·`#31`·`#34`·`#36`·`#38`·`#40`·`#42`가 존재하고 제목이 `TICKET-NNN` 형식 |
 
 **어긋나면 → 작업을 진행하기 전에 이 문서를 먼저 고친다.**
 갱신하지 않은 채로 다음 작업에 들어가지 말 것 — 이 문서가 틀리면 다음 세션이 틀린다.
@@ -94,7 +94,7 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 
 ## §4. 진행 경과
 
-**현재 단계: 일반화 검증 — 2편째 논문(#36)으로 Gate A·정제를 보강했다. 실전 Notion 업로드(#19·#31)의 육안 판정과 P4·P5 결정은 여전히 사용자 대기**
+**현재 단계: md 출력은 사용자 육안 검증을 통과했다 — 인용 점프 동작 확인(#40), 표는 병합 여부로 이미지/텍스트를 가른다(#42). 남은 것은 실전 Notion 업로드(#19·#31)의 육안 판정과 P4·P5 결정으로, 둘 다 사용자 대기**
 
 | 시점 | 내용 |
 |---|---|
@@ -126,6 +126,7 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 | 〃 | #38 출력 md의 마지막 HTML(`<sup>`) 제거 — 뷰어가 "contains HTML"로 코드 모드를 강제해 문서 편집이 막혔다. R4(위첨자 해제)·R5(잔존 HTML 경고) 신설, 수식 회피 로직을 `_sub_outside_math`로 공유 (§11.9) |
 | 〃 | #40 사용자 육안 검증 3건 — 인용 점프 불가(author-year 서식)·서식(볼드·색) 부재·병합 셀 반복. 셋 다 경고 없이 나갔다. R2에 author-year 경로(실측 84/84 해결, 부록 포함)·R1에 병합 셀 앵커 표현과 다중 행 헤더 합치기·Gate A에 서식 안내 경고를 넣었다. P6은 재확인 후 유지 |
 | 〃 | #42 **병합이 있는 표만** MinerU 렌더 이미지로 출력 — 마크다운에 병합 문법이 없고 토글도 없다(`<details>`는 HTML→코드 모드). 그 이미지에 병합·볼드·밑줄·빨간색이 전부 살아 있고 이미 `output/images/`에 있었는데 참조된 적이 없었다. 병합 없는 표는 파이프 테이블로 남긴다 — 셀 텍스트·수식·인용 링크를 잃을 이유가 없다. 판정은 `rowspan`/`colspan` 실값(실측 7개 중 5개 병합) |
+| 〃 | **사용자 육안 검증: 인용 클릭 이동 동작 확인** — 번호형·author-year형 둘 다. P2 종결. 남은 육안 판정은 Notion 실전 업로드(#19·#31)뿐 |
 
 ### v2 변경의 파급
 
@@ -174,8 +175,10 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 
 ### 다음 할 일
 
-- **#19·#31 실전 업로드의 육안 판정 대기** — 수식 렌더·표 셀 값·이미지·인용 점프,
+- **#19·#31 실전 Notion 업로드의 육안 판정 대기** — 수식 렌더·표 이미지·인용 점프,
   그리고 md 직접 업로드(#31)의 실물 결과는 눈으로만 확인 가능하다 (§10).
+  **md 출력 쪽 점프는 확인됐다** (2026-08-23) — Notion 쪽은 앵커 메커니즘이
+  달라(블록 id 패치, §11.11) 따로 봐야 한다.
 - 열린 결정 두 개 **사용자 판정 대기** (PLAN.md Phase 2의 P4·P5): 저작권 각주의
   처분과 부록 제목의 헤딩화. 결정되면 규칙을 `refine.py`에 추가한다.
 - **논문을 더 투입한다.** 2편째(#36)에서 편차 3종이 나왔고 전부 규칙이 됐다.
@@ -300,7 +303,7 @@ python -m pdf2md.strict                          # strict.py 자체 점검 — p
 python -m pdf2md.mineru_api                      # API 클라이언트 자체 점검 (MockTransport) — passed
 python -m pytest tests/ -q                       # 루트 스위트 — 151 passed
 python -m pdf2md "pdfs/Attention is all you need.pdf" --md      # 끝까지 — 경고 7건, halt 없이 output/ 조립
-python -m pdf2md "pdfs/Toward Autonomous Long-Horizon Engineering for ML Research.pdf" --md  # 2편째 — 경고 5건
+python -m pdf2md "pdfs/Toward Autonomous Long-Horizon Engineering for ML Research.pdf" --md  # 2편째 — 경고 7건
 python -m pdf2md "pdfs/Attention is all you need.pdf" --notion <page-url>  # 위 + Notion append (실 API)
 ```
 
@@ -343,7 +346,9 @@ CI가 없다. 모든 검증은 로컬에서 수동으로 이뤄진다.
    실측(2026-08-22) 기준으로 개정됨. 새 필드에 의존하기 전에 캐시의 실물
    `content_list.json`을 먼저 본다.
 9. **사용자의 뷰어는 Orca(디폴트 뷰)다.** 실측: HTML `<a id>` 앵커로는 점프가
-   안 되고, GitHub식 헤딩 슬러그 링크만 문서 내 점프가 된다. 그리고 **파일을 코드
+   안 되고, GitHub식 헤딩 슬러그 링크만 문서 내 점프가 된다. **번호형(`#18`)과
+   author-year형(`#starace-et-al-2025`) 둘 다 사용자 실사용에서 점프 확인됨
+   (2026-08-23)** — 여러 단어·마침표가 든 슬러그도 동작한다. 그리고 **파일을 코드
    모드로 강제하는 원인이 둘이다** — 각주 문법(`[^N]:`)이 한 줄이라도 있을 때, 그리고
    **HTML 태그가 하나라도 있을 때**("Editable only in code mode because this file
    contains HTML, JSX, or MDX" — #38에서 `<sup>` 하나로 확인). 코드 모드가 되면
