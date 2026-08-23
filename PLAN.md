@@ -2,8 +2,11 @@
 
 > **개정 이력**
 > - v1 (2026-08-22): PDF → Markdown → **Notion 페이지**
-> - **v2 (2026-08-22): PDF → **정제된 Markdown**. 최종 산출물을 마크다운으로 변경.**
+> - v2 (2026-08-22): PDF → **정제된 Markdown**. 최종 산출물을 마크다운으로 변경.
 >   마크다운 뷰어의 가독성·편집성이 충분하다는 판단. Notion 경로는 부록에 보관.
+> - **v3 (2026-08-23): Notion 출력 경로 부활 (Phase 4).** 마크다운을 대체하는 것이
+>   아니라 선택지 추가 — Notion 모드에서도 `output/` 마크다운은 그대로 생성된다.
+>   v1과 달리 정제된 마크다운(R1~R3의 출력)을 변환기의 입력 계약으로 삼는다.
 
 ---
 
@@ -20,8 +23,8 @@
 
 ```
 PDF ─[MinerU API v4]→ cache/{sha256}/ ─[Gate A]→ [정제]→ output/{이름}.md + images/
-                       md + content_list.json      ↑
-                                            인식 실패 감지
+                       md + content_list.json      ↑           │ (--notion 선택 시)
+                                            인식 실패 감지       └→ [블록 변환]→ Notion 페이지
 ```
 
 ---
@@ -58,7 +61,7 @@ Gate B는 **"Notion이 표현 못 하는 것"**을 잡는 게이트였다. 출�
 | PDF 파서 | MinerU 공식 API v4, `model_version="vlm"`. 로컬 실행은 하지 않음 |
 | 손실 검증 | **Gate A만 남는다.** Gate B는 삭제 |
 | **정제 범위** | **지금 정하지 않는다.** Phase 1로 실제 출력을 본 뒤 Phase 2에서 확정 |
-| Notion 경로 | **보관.** `reference/`는 방치하고 계획·구현에서 사용하지 않음. `.env`의 `NOTION_API_KEY`도 남겨둠 |
+| Notion 경로 | **부활 (v3, Phase 4).** `--notion <page-url>`로 선택. `reference/`는 여전히 사용하지 않음 — 이미지·링크 미지원과 `content[:2000]` 잘라내기 때문 (Phase 4 참조) |
 | 이미지 | MinerU의 `images/` 폴더를 그대로 동반. base64 인라인 안 함 |
 | 패키지명 | `pdf2md` (저장소 폴더명 `PDF_to_Notion`은 역사적 잔재. 무해하므로 그대로 둠) |
 
@@ -138,17 +141,21 @@ HTML 표를 렌더한다). 파이프 테이블 변환은 Phase 2에서 실제 �
 ```
 pdf2md/
 ├── __init__.py
-├── __main__.py     CLI. 인자 파싱, parse_pdf() 조립, 리포트 출력
-├── strict.py       Violation / ParseResult / format_report / 프로젝트 소유 에러 타입
-├── mineru_api.py   API 3단계 fetch_zip(). 네트워크만 — 캐시도 압축해제도 모른다
-├── cache.py        cache/{sha256(pdf)}/ 관리, ZIP 해제, output/ 조립
-├── gate_a.py       content_list 순회 → list[Violation]
-└── refine.py       Phase 3 정제 규칙 R1~R3. markdown 문자열 → (정제본, 경고 목록)
+├── __main__.py       CLI. 인자 파싱, 출력 대상 선택, parse_pdf() 조립, 리포트 출력
+├── strict.py         Violation / ParseResult / NotionDoc / format_report / 에러 타입
+├── mineru_api.py     API 3단계 fetch_zip(). 네트워크만 — 캐시도 압축해제도 모른다
+├── cache.py          cache/{sha256(pdf)}/ 관리, ZIP 해제, output/ 조립
+├── gate_a.py         content_list 순회 → list[Violation]
+├── refine.py         Phase 3 정제 규칙 R1~R3. markdown 문자열 → (정제본, 경고 목록)
+├── notion_blocks.py  Phase 4. 정제된 md → NotionDoc. 순수 — 한도 검사 전부 여기서
+└── notion_upload.py  Phase 4. HTTP만 — 이미지 2단계·배치 append·인용 링크 패치
 tests/
-├── test_gate_a.py  Gate A 5개 조건 + 정상 입력 오탐 여부
-├── test_cache.py   ZIP glob 해제, 캐시 히트
-├── test_cli.py     parse_pdf 조립 순서, Gate A halt 정책
-└── test_refine.py  R1~R3 각각 + 변환 불가 시 원본 유지
+├── test_gate_a.py          Gate A 5개 조건 + 정상 입력 오탐 여부
+├── test_cache.py           ZIP glob 해제, 캐시 히트
+├── test_cli.py             parse_pdf 조립 순서, Gate A halt 정책, 출력 대상 선택
+├── test_refine.py          R1~R3 각각 + 변환 불가 시 원본 유지
+├── test_notion_blocks.py   블록 변환·한도 검사·인용/참조 기록 (오프라인)
+└── test_notion_upload.py   배치·재시도·부분 실패 보고·링크 패치 (MockTransport)
 cache/              {sha256(pdf)}/ — MinerU 결과. git 추적 금지
 output/             {stem}.md + images/ — 최종 산출물
 ```
@@ -273,6 +280,105 @@ Phase 2에서 실제로 깨진 것만 규칙이 됐다. `pdf2md/refine.py`가 �
 
 ---
 
+## Phase 4 — Notion 출력 경로 (v3, 2026-08-23 구현)
+
+`--notion <page-url>` 선택 시 정제된 마크다운을 Notion 블록으로 변환해 기존
+페이지에 append한다. **md 출력은 그대로 생성된다** — Notion이 실패해도 결과물은
+온전히 남도록 md를 먼저 쓴다.
+
+### 기각한 게으른 경로 두 개
+
+1. **Notion의 마크다운 직접 입력** — `markdown` 입력은 `POST /v1/pages`(새 페이지
+   생성)에만 있고 `PATCH /v1/blocks/{id}/children`(기존 페이지 append)은 받지
+   않는다. 공식 블록↔마크다운 매핑표에 인라인 수식·페이지 내 블록 링크·로컬 업로드
+   이미지의 표현이 없다 — 이 문서에 각각 92·74·5개 있다.
+2. **`reference/notes/notion_parser.py`(595줄) 이식** — 이미지·링크를 전혀 지원하지
+   않고(리터럴 텍스트가 된다), rich_text 2000자를 분할이 아니라 `content[:2000]`으로
+   잘라낸다. 조용한 데이터 소실은 이 프로젝트가 막으려는 바로 그 실패다.
+
+### 핵심 설계 — refine을 분기하지 않는다
+
+R2의 출력이 곧 변환기의 입력 계약이다. `###### [N]` 미니 헤딩 = 참조 항목 식별자,
+`[[18](#18)]` = 파싱이 끝난 인용 마커. 변환 규칙은 두 줄: `###### [N]`+다음 줄을
+paragraph 한 블록으로 병합하며 `N → 블록 인덱스` 기록(h6 40개가 heading_3으로
+뭉개지는 문제도 같이 소멸), 인용은 일반 인라인 링크 파서가 자연히 처리. md 출력과
+Notion 출력의 내용 동등성이 증명 대상이 아니라 구조적 사실이 된다 — 같은 문자열에서
+나오므로. `content_list.json` 직접 변환은 기각 — `table_body`가 HTML이라 rowspan
+전개기를 복제해야 하는 반면 R1의 파이프 표는 전개가 끝나 있다.
+
+### 한도와 halt 정책 — 검사는 전부 네트워크 이전 (`to_blocks` 안)
+
+| 상황 | 처분 |
+|---|---|
+| equation expression 1000자 초과 | **halt** — 자르면 틀린 수식 (실측 최대 332자) |
+| rich_text 2000자 초과 | **분할** — 절대 자르지 않는다. 조각 join == 원문 |
+| rich_text 배열 100개 초과 | **halt** — Notion이 validation_error를 내므로 침묵 손실 아님 (실측 최대 17개) |
+| 요청 500KB 초과 | 배치를 반으로 분할 |
+| md에 HTML `<table>` 잔존 | **halt** — 텍스트로 박히면 표가 사라진 것과 같다 |
+| `$` 홀수 줄 | 전부 평문 + 경고 — 수식 경계를 추정하지 않는다 |
+| `<sup>4</sup>` | `⁴` 유니코드 위첨자 + 경고. `∗ † ‡`는 자형이 없어 문자만 보존 |
+| `####` 헤딩 | `heading_3` 클램프 + 경고 (3개) |
+| 표 헤더 2행 (rowspan 전개 흔적) | 경고 — `has_column_header`는 불리언 하나뿐, 내용은 보존 |
+| md가 참조하는 이미지 파일 부재 | **halt** — 업로드 중간 실패(부분 쓰기)를 만들지 않는다 |
+
+**LaTeX는 절대 정규화하지 않는다** — `$`와 `$` 사이를 바이트 그대로 복사한다.
+
+### 업로드 순서와 실패 정책
+
+```
+1) output/{stem}.md 먼저 쓰기      ← Notion이 실패해도 결과물은 온전
+2) 기존 자식 수 확인 (count_children) → 1개 이상이면 중복 안내
+3) 이미지 2단계 File Upload        (이미지당 2 요청, id는 1시간 만료라 캐시 금지)
+4) 100개씩 배치 append → 응답 results에서 블록 id 수집
+5) 인용 → 참조 블록 앵커 링크 PATCH (블록당 1회, 실패는 경고 — halt 아님)
+```
+
+- **부분 실패는 롤백하지 않고 정확히 보고한다** — "appended N of M blocks before
+  failing at batch i/j" + 페이지 URL + 중복 안내 후 exit 1. DELETE 롤백은 그 자체가
+  N개의 새 요청이고, 사용자의 페이지에 대고 지우는 동작이다.
+- 429/5xx는 `Retry-After` 존중 1회 재시도, 요청 간 0.34s (3 req/s 아래).
+- 404 메시지에 "Share the page with the `Automations` integration" 포함
+  (404는 "없음"과 "공유 안 됨"을 구분하지 않는다).
+- 인용 패치 실패는 경고 + exit 0 — 인용은 평문 `[N]`으로 남아 읽을 수 있다.
+  표 셀 안 인용은 패치 불가(2단계 블록이라 append 응답에 id가 없음) — 평문 + 경고.
+
+### CLI (v3)
+
+```
+python -m pdf2md <pdf>                      # 대화형 — 출력 대상을 묻는다
+python -m pdf2md <pdf> --md                 # 묻지 않고 output/ 만
+python -m pdf2md <pdf> --notion <page-url>  # 묻지 않고 Notion + output/
+python -m pdf2md <pdf> --notion             # URL만 묻는다
+```
+
+`input()`이 EOF·캡처 stdin을 만나면 traceback 대신 usage error(2).
+플래그 실행은 스크립트를 막지 않는다 — 중복 경고도 한 줄 찍고 진행.
+
+### 검증된 Notion 사실
+
+| 항목 | 확인 결과 |
+|---|---|
+| 통합 | `Automations` (워크스페이스 `Home`), 토큰은 `.env`의 `NOTION_API_KEY` |
+| API 버전 | `Notion-Version: 2026-03-11` |
+| 검증용 페이지 | `3c402360b04780f7bcd9fe1ee0c87948` — "Attention is all you need" |
+| 한도 | rich_text 2000자·배열 100개, equation 1000자, 요청 500KB·블록 1000개 |
+| 파일 업로드 | 단일 파트 2단계 (`POST /v1/file_uploads` → `POST /…/send` multipart, 필드명 `file`). ≤20MB |
+| 이미지 블록 | `{"type":"image","image":{"type":"file_upload","file_upload":{"id":"…"}}}` |
+| 표 | `table_width`·`has_column_header`·`cells`. colspan/rowspan API 미지원 |
+
+### TICKET-015 probe 실측 (2026-08-23, 실 API + 브라우저 육안)
+
+프로브 블록은 DELETE로 전량 원복 (자식 수 1 → 1 확인).
+
+| # | 질문 | 실측 답 |
+|---|---|---|
+| 1 | 페이지 내 블록 앵커 링크가 점프하는가 | **점프한다.** `https://www.notion.so/{page_id}#{block_id 대시 제거}` 를 rich_text `link.url`에 넣으면 클릭 시 대상 블록으로 이동 |
+| 2 | 표 셀 안 equation rich_text가 살아남는가 | **살아남고 렌더된다.** 되읽기에서 expression 바이트 동일 |
+| 3 | 13열 표를 받아주는가 | **받아준다.** append 200, 되읽기 13열 그대로. 셀 안 링크도 생존 |
+| 4 | `\tag{1}` 이 렌더되는가 | **렌더된다.** 수식 우측에 (1) 표시 → 변환기는 `\tag`를 그대로 통과시킨다 |
+
+---
+
 ## 테스트
 
 `reference/`의 36개는 이번 계획에서 쓰지 않는다. 새로 만든다.
@@ -323,38 +429,4 @@ python -m pdf2md "Attention is all you need.pdf"
 - MinerU 이슈 #4311/#3849의 **수정** — 감지만. 실제 발생 시 대응
 - base64 이미지 인라인 — `images/` 폴더 동반 방식
 - 정제 규칙의 사전 설계 — Phase 2에서 실제 출력을 보고 정함
-- Notion 업로드 (부록 참조)
 
----
-
-## 부록 — 보류된 Notion 경로
-
-되살릴 경우를 위해 **검증 완료된 사실만** 남긴다. `reference/`는 방치 상태로 보존됨.
-
-| 항목 | 확인 결과 (2026-08-22) |
-|---|---|
-| 통합 | `Automations` (워크스페이스 `Home`), 토큰은 `.env`의 `NOTION_API_KEY` |
-| API 버전 | `Notion-Version: 2026-03-11` 동작 확인 |
-| 대상 페이지 | `3c402360b04780f7bcd9fe1ee0c87948` — "Attention is all you need", 자식 블록 1건 (2026-08-23 재측정) |
-| 쓰기 권한 | `PATCH /blocks/{id}/children` 성공, `DELETE /blocks/{id}` 성공 (검증 후 원상복구) |
-| 한도 | rich_text 2000자·배열 100개, equation 1000자, 요청 500KB·블록 1000개 |
-| 파일 업로드 | 단일 파트 **2단계** (`POST /v1/file_uploads` → `POST /…/send` multipart, 필드명 `file`). ≤20MB |
-| 이미지 블록 | `{"type":"image","image":{"type":"file_upload","file_upload":{"id":"…"}}}` |
-| 표 | `table_width`·`has_column_header`·`cells`. **colspan/rowspan API 미지원** |
-| `reference/` 상태 | 36 passed. `notion_parser.py` 595L 재사용 가능 |
-
-### TICKET-015 probe 실측 (2026-08-23, 실 API + 브라우저 육안)
-
-Notion 출력 경로 부활(#15~#19)이 의존하는 네 가지 미확인 사실을 검증용 페이지에서
-실측했다. 프로브 블록은 DELETE로 전량 원복 (자식 수 1 → 1 확인).
-
-| # | 질문 | 실측 답 |
-|---|---|---|
-| 1 | 페이지 내 블록 앵커 링크가 점프하는가 | **점프한다.** `https://www.notion.so/{page_id}#{block_id 대시 제거}` 를 rich_text `link.url`에 넣으면 클릭 시 대상 블록으로 이동 (사용자 브라우저 확인) |
-| 2 | 표 셀 안 equation rich_text가 살아남는가 | **살아남고 렌더된다.** `GET /blocks/{table_id}/children` 되읽기에서 expression **바이트 동일**, 브라우저에서 수식으로 렌더 (사용자 확인) |
-| 3 | 13열 표를 받아주는가 | **받아준다.** `table_width: 13` append 200, 되읽기 13열 그대로. 셀 안 링크도 생존 |
-| 4 | `\tag{1}` 이 렌더되는가 | **렌더된다.** 빨간 에러 없이 수식 우측에 (1) 표시 (사용자 확인) → #16은 `\tag`를 그대로 통과시킨다 |
-
-되살릴 때 필요한 작업: Gate B(2000자 분할·1000자 halt·미지원 마크업 sniffer·
-HTML→Notion 표 변환·이미지 블록), `notion_upload.py`, `URL→page_id`.
-상세는 이 문서 v1 (git 이력 또는 `~/.claude/plans/`) 참조.

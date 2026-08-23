@@ -82,7 +82,6 @@ def test_250_blocks_appended_as_three_ordered_batches():
     flat = [c["paragraph"]["rich_text"][0]["text"]["content"]
             for batch in seen for c in batch]
     assert flat == [f"b{i}" for i in range(250)]  # 문서 순서 보존
-    assert len(nu.appended_block_ids) == 250  # #19가 인용 패치에 쓸 id
 
 
 def test_batch_over_500kb_is_split_before_sending():
@@ -198,7 +197,6 @@ def test_partial_failure_reports_exact_progress_and_deletes_nothing():
     assert PAGE_URL in msg
     assert "delete them in Notion before rerunning, or accept duplicates" in msg
     assert state["deletes"] == 0  # 롤백하지 않는다
-    assert len(nu.appended_block_ids) == 100  # 성공분의 id는 남긴다
 
 
 # ---- 기타 경계 ----
@@ -252,3 +250,94 @@ def test_httpx_exceptions_do_not_escape():
     with pytest.raises(NotionApiError) as e:
         nu.upload(make_doc([para("a")]), PAGE_URL, transport=httpx.MockTransport(handler))
     assert "boom" in str(e.value)
+
+
+# ---- 인용 → 참조 블록 점프 링크 패치 (#19) ----
+
+def make_cited_doc() -> NotionDoc:
+    """블록 0: 본문 인용(rt 인덱스 1이 "18"), 블록 1: References 항목 [18]."""
+    body = {"type": "paragraph", "paragraph": {"rich_text": [
+        {"type": "text", "text": {"content": "see ["}},
+        {"type": "text", "text": {"content": "18"}},
+        {"type": "text", "text": {"content": "]"}}]}}
+    doc = make_doc([body, para("[18] Some Author. Some Paper.")])
+    doc.citations.append((0, 1, "18"))
+    doc.ref_targets["18"] = 1
+    return doc
+
+
+def cite_handler(patches: dict):
+    """append는 정상 처리하고, 블록 단건 PATCH는 patches에 기록하는 핸들러."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if request.method == "PATCH" and url.endswith("/children"):
+            return append_ok(request)
+        if request.method == "PATCH" and "/blocks/" in url:
+            patches[url.rsplit("/", 1)[-1]] = json.loads(request.content)
+            return httpx.Response(200, json={})
+        raise AssertionError(f"unexpected request: {request.method} {url}")
+    return handler
+
+
+def test_citation_patch_links_to_target_block_id():
+    patches: dict = {}
+    url = nu.upload(make_cited_doc(), PAGE_URL,
+                    transport=httpx.MockTransport(cite_handler(patches)))
+    assert url == PAGE_URL
+    assert list(patches) == ["id-0"]  # 인용이 있는 블록만 패치한다
+    rt = patches["id-0"]["paragraph"]["rich_text"]
+    # 앵커는 probe 실측 형태: …/{page_id}#{블록 id 대시 제거}. 참조 항목은 id-1
+    assert rt[1]["text"]["link"]["url"] == f"https://www.notion.so/{PAGE_ID}#id1"
+    assert rt[1]["text"]["content"] == "18"  # 텍스트는 그대로 — 링크만 단다
+    assert "link" not in rt[0]["text"]  # 인용이 아닌 요소는 건드리지 않는다
+    assert len(rt) == 3  # 전체 배열을 온전히 다시 보낸다
+
+
+def test_two_citations_in_one_block_are_one_patch():
+    doc = make_cited_doc()
+    # 블록 0에 두 번째 인용 추가 (rt 인덱스 2를 "7"로 교체), 참조 항목 [7] 추가
+    doc.blocks[0]["paragraph"]["rich_text"][2] = {
+        "type": "text", "text": {"content": "7"}}
+    doc.blocks.append(para("[7] Other Author."))
+    doc.citations.append((0, 2, "7"))
+    doc.ref_targets["7"] = 2
+    patches: dict = {}
+    nu.upload(doc, PAGE_URL, transport=httpx.MockTransport(cite_handler(patches)))
+    assert list(patches) == ["id-0"]  # 블록당 한 번, 인용당 한 번이 아니다
+    rt = patches["id-0"]["paragraph"]["rich_text"]
+    assert rt[1]["text"]["link"]["url"].endswith("#id1")
+    assert rt[2]["text"]["link"]["url"].endswith("#id2")
+
+
+def test_patch_failure_warns_but_exit_stays_success(capsys):
+    def handler(request: httpx.Request) -> httpx.Response:
+        url = str(request.url)
+        if request.method == "PATCH" and url.endswith("/children"):
+            return append_ok(request)
+        return httpx.Response(400, json={"code": "validation_error"})
+
+    url = nu.upload(make_cited_doc(), PAGE_URL, transport=httpx.MockTransport(handler))
+    assert url == PAGE_URL  # 패치 실패는 halt가 아니다 — 인용은 평문으로 읽힌다
+    err = capsys.readouterr().err
+    assert "notion:" in err and "citation" in err
+
+
+def test_no_citations_means_no_patch_requests():
+    doc = make_doc([para("plain text, no citations")])
+    calls: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(str(request.url))
+        return append_ok(request)
+
+    nu.upload(doc, PAGE_URL, transport=httpx.MockTransport(handler))
+    assert all(u.endswith("/children") for u in calls)  # append 외 요청 없음
+
+
+def test_citation_without_target_is_left_plain_with_warning(capsys):
+    doc = make_cited_doc()
+    doc.ref_targets.clear()  # 방어 경로 — #16이 보장하지만 침묵 손실은 안 된다
+    patches: dict = {}
+    nu.upload(doc, PAGE_URL, transport=httpx.MockTransport(cite_handler(patches)))
+    assert patches == {}  # 링크할 대상이 없으면 패치도 없다
+    assert "notion:" in capsys.readouterr().err
