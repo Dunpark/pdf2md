@@ -45,7 +45,7 @@ gh issue list --repo Dunpark/pdf2md --state all --limit 10
 python -m pdf2md "pdfs/Attention is all you need.pdf" --md     # → Gate A 경고 7건 → output/{stem}.md + images/
                                                           #   캐시 히트 시 0.4s·네트워크 없음
 python -m pdf2md "pdfs/Attention is all you need.pdf" --notion <page-url>  # → 위 + Notion 페이지 append
-python -m pytest tests/ -q                        # → 117 passed
+python -m pytest tests/ -q                        # → 126 passed
 
 python -m pdf2md.strict                           # → self-check passed, exit 0
 python -m pdf2md.mineru_api                       # → self-check passed (MockTransport, 네트워크 안 탐)
@@ -123,6 +123,7 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 | 〃 | #30 `reference/` 삭제 — Phase 4 자체 구현 완성으로 되살릴 가능성 소멸. bare pytest 함정도 함께 소멸 |
 | 〃 | #31 md 입력 → 바로 Notion 업로드 추가 — `--md`로 뽑은 md를 편집한 뒤 재해석 없이 올리는 경로. 파싱·Gate A·정제 건너뜀. 실전 업로드 육안 판정 대기 |
 | 〃 | #36 2편째 논문 투입 → Gate A는 `OK`인데 출력 깨짐. 원인 3건 확정(md 생성 단계의 블록 유실·셀 중간 절단·절 번호 서식 편차). Gate A에 커버리지·절단·미지타입 검사 신설, R3를 끝점·부록 문자까지 확장 (PLAN Phase 2 "논문 간 편차") |
+| 〃 | #38 출력 md의 마지막 HTML(`<sup>`) 제거 — 뷰어가 "contains HTML"로 코드 모드를 강제해 문서 편집이 막혔다. R4(위첨자 해제)·R5(잔존 HTML 경고) 신설, 수식 회피 로직을 `_sub_outside_math`로 공유 (§11.9) |
 
 ### v2 변경의 파급
 
@@ -160,6 +161,7 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 | 6 | #16 · #17 · #18 | 블록 변환 · 업로드 · CLI 대상 선택. **계약 기점 커밋 공유 병렬** |
 | 7 | #19 | 인용 점프 링크 + PLAN v3 (**실전 업로드의 사용자 판정 필요**) |
 | — | #36 | 논문 간 편차 대응 — Gate A 커버리지·셀 절단·미지타입 검사, R3 번호 서식 확장 |
+| — | #38 | 출력 md에서 HTML 제거 — R4 위첨자 해제 · R5 잔존 HTML 경고 |
 
 **병렬 wave가 성립하는 조건은 두 가지뿐이다** — 모듈이 서로를 임포트하지 않고,
 서로 다른 파일을 소유한다. 공유 타입은 병렬 시작 전에 먼저 존재해야 한다: Wave 2는
@@ -292,7 +294,7 @@ Python  3.13.15
 ```bash
 python -m pdf2md.strict                          # strict.py 자체 점검 — passed, exit 0
 python -m pdf2md.mineru_api                      # API 클라이언트 자체 점검 (MockTransport) — passed
-python -m pytest tests/ -q                       # 루트 스위트 — 117 passed
+python -m pytest tests/ -q                       # 루트 스위트 — 126 passed
 python -m pdf2md "pdfs/Attention is all you need.pdf" --md      # 끝까지 — 경고 7건, halt 없이 output/ 조립
 python -m pdf2md "pdfs/Toward Autonomous Long-Horizon Engineering for ML Research.pdf" --md  # 2편째 — 경고 5건
 python -m pdf2md "pdfs/Attention is all you need.pdf" --notion <page-url>  # 위 + Notion append (실 API)
@@ -337,9 +339,12 @@ CI가 없다. 모든 검증은 로컬에서 수동으로 이뤄진다.
    실측(2026-08-22) 기준으로 개정됨. 새 필드에 의존하기 전에 캐시의 실물
    `content_list.json`을 먼저 본다.
 9. **사용자의 뷰어는 Orca(디폴트 뷰)다.** 실측: HTML `<a id>` 앵커로는 점프가
-   안 되고, **각주 문법(`[^N]:`)이 한 줄이라도 있으면 파일 전체가 코드 모드로
-   강제**되며, GitHub식 헤딩 슬러그 링크만 문서 내 점프가 된다. md 출력 규칙을
-   바꿀 때 이 세 가지를 전제로 한다 (PLAN.md Phase 3 R2).
+   안 되고, GitHub식 헤딩 슬러그 링크만 문서 내 점프가 된다. 그리고 **파일을 코드
+   모드로 강제하는 원인이 둘이다** — 각주 문법(`[^N]:`)이 한 줄이라도 있을 때, 그리고
+   **HTML 태그가 하나라도 있을 때**("Editable only in code mode because this file
+   contains HTML, JSX, or MDX" — #38에서 `<sup>` 하나로 확인). 코드 모드가 되면
+   문서로 편집할 수 없다. md 출력 규칙을 바꿀 때 이 전제 위에서 판단한다
+   (PLAN.md Phase 3 R2·R4·R5).
 10. **Notion의 마크다운 직접 입력은 append를 지원하지 않는다.** `markdown` 입력은
     `POST /v1/pages`(새 페이지 생성) 전용이고 `PATCH /v1/blocks/{id}/children`은
     받지 않는다. 매핑표에 인라인 수식·블록 링크·로컬 이미지도 없다 — 그래서

@@ -1,4 +1,4 @@
-"""Phase 3 정제 — 실제로 깨진 것만 고친다 (PLAN.md Phase 3, 규칙 R1~R3).
+"""Phase 3 정제 — 실제로 깨진 것만 고친다 (PLAN.md Phase 3, 규칙 R1~R5).
 
 refine(markdown) -> (정제된 markdown, 경고 목록). 순수 문자열 변환이고
 프로젝트 안의 무엇도 임포트하지 않는다.
@@ -21,15 +21,48 @@ _REF_HEADING_RE = re.compile(r"^#{1,6}\s+References\s*$")
 _REF_ENTRY_RE = re.compile(r"^\[(\d+)\]\s")
 # 논문마다 번호 서식이 다르다 (#36): "3.1"·"3.1."(끝점)·"A.1."(부록 문자).
 _NUMBERED_HEADING_RE = re.compile(r"^## ((?:\d+|[A-Z])(?:\.\d+)*\.?)( .*)$")
+_SUP_RE = re.compile(r"<sup>(.*?)</sup>")
+_SUP_DIGITS = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
+_HTML_TAG_RE = re.compile(r"</?([a-zA-Z][a-zA-Z0-9]*)(?:\s[^<>]*)?/?>")
 
 
 def refine(markdown: str) -> tuple[str, list[str]]:
-    """R1(표) → R2(참조 링크) → R3(헤딩 깊이) 순서로 적용한다."""
+    """R1(표) → R2(참조 링크) → R3(헤딩 깊이) → R4(위첨자) → R5(잔존 HTML) 순."""
     notes: list[str] = []
     md = _convert_tables(markdown, notes)
     md = _link_citations(md)
     md = _fix_heading_depth(md)
+    md = _unwrap_superscripts(md, notes)
+    _warn_leftover_html(md, notes)  # 마지막 — 모든 규칙이 끝난 상태를 본다
     return md, notes
+
+
+# ---------- 수식 바깥에만 손대기 (R2·R4·R5 공용) ----------
+
+def _sub_outside_math(text: str, sub) -> str:
+    """줄마다 수식 구간을 빼고 나머지 조각에만 sub(str)->str 을 적용한다.
+
+    `$$` 블록은 통째로, 인라인 `$…$`는 구간만 원본 그대로 둔다 — 수식은 어떤
+    규칙으로도 건드리지 않는다. 조각을 읽기만 하고 그대로 돌려주면 스캐너로도 쓴다.
+    """
+    out: list[str] = []
+    in_display_math = False
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if stripped == "$$" or (stripped.startswith("$$") ^ stripped.endswith("$$")):
+            in_display_math = not in_display_math
+            out.append(line)
+            continue
+        if in_display_math or (stripped.startswith("$$") and stripped.endswith("$$")):
+            out.append(line)
+            continue
+        parts = [sub(p) for p in _INLINE_MATH_RE.split(line)]
+        maths = _INLINE_MATH_RE.findall(line)
+        rebuilt = parts[0]
+        for math, part in zip(maths, parts[1:]):
+            rebuilt += math + part
+        out.append(rebuilt)
+    return "\n".join(out)
 
 
 # ---------- R1: HTML 표 → GFM 파이프 테이블 ----------
@@ -141,23 +174,13 @@ def _link_citations(md: str) -> str:
             return m.group(0)  # 목록에 없는 번호는 인용이 아니다 — 건드리지 않는다
         return "[" + ", ".join(f"[{n}](#{n})" for n in nums) + "]"
 
-    in_display_math = False
-    for i in range(ref_start):  # 본문에만 적용. References 자신은 제외
-        stripped = lines[i].strip()
-        if stripped == "$$" or (stripped.startswith("$$") ^ stripped.endswith("$$")):
-            in_display_math = not in_display_math
-            continue
-        if in_display_math or (stripped.startswith("$$") and stripped.endswith("$$")):
-            continue
-        # 인라인 수식 구간은 잘라내고 바깥 조각에만 적용한다
-        parts = _INLINE_MATH_RE.split(lines[i])
-        maths = _INLINE_MATH_RE.findall(lines[i])
-        parts = [_CITATION_RE.sub(_link, p) for p in parts]
-        rebuilt = parts[0]
-        for math, part in zip(maths, parts[1:]):
-            rebuilt += math + part
-        lines[i] = rebuilt
-    return "\n".join(lines)
+    # 본문에만 적용한다. References 자신은 인용이 아니라 목록이므로 제외
+    tail = "\n".join(lines[ref_start:])
+    if ref_start == 0:
+        return tail
+    head = _sub_outside_math("\n".join(lines[:ref_start]),
+                             lambda part: _CITATION_RE.sub(_link, part))
+    return head + "\n" + tail
 
 
 # ---------- R3: 번호 헤딩 깊이 ----------
@@ -172,3 +195,48 @@ def _fix_heading_depth(md: str) -> str:
     return "\n".join(
         _NUMBERED_HEADING_RE.sub(_deepen, line) for line in md.split("\n")
     )
+
+
+# ---------- R4: <sup> 해제 ----------
+#
+# 마크다운에는 위첨자 문법이 없고, 뷰어는 HTML이 한 줄이라도 있으면 파일 전체를
+# 코드 모드로 강제한다 (CLAUDE.md §11.9). 그래서 태그를 벗긴다.
+# notion_blocks가 md 직접 입력(#31)을 위해 같은 변환을 따로 갖고 있다 — 그쪽은
+# refine을 거치지 않은 손편집 md도 받으므로 사본이 제 몫을 한다.
+
+def _unwrap_superscripts(md: str, notes: list[str]) -> str:
+    """<sup>4</sup> → ⁴. 유니코드 위첨자 자형이 없는 ∗ † ‡ 는 문자만 남는다."""
+    count = 0
+
+    def _sup(m: re.Match) -> str:
+        nonlocal count
+        count += 1
+        return m.group(1).translate(_SUP_DIGITS)
+
+    out = _sub_outside_math(md, lambda part: _SUP_RE.sub(_sup, part))
+    if count:
+        # 태그마다 한 줄이면 실측 11줄 — 리포트가 소음에 덮인다. 실행당 한 줄.
+        notes.append(f"unwrapped {count} <sup> tag(s) to unicode superscript "
+                     "(markdown has no superscript markup)")
+    return out
+
+
+# ---------- R5: 남은 HTML 경고 ----------
+
+def _warn_leftover_html(md: str, notes: list[str]) -> None:
+    """규칙이 다 돌고도 남은 태그를 알린다 — 고치지는 않는다.
+
+    오늘은 <sup>이었고 다음 논문은 <br>·<i>일 것이다. 특정 태그만 처리하고
+    일반 경고를 두지 않으면 같은 고장이 또 조용히 사용자에게 간다 (#38).
+    """
+    tags: set[str] = set()
+
+    def _scan(part: str) -> str:
+        tags.update(m.group(1).lower() for m in _HTML_TAG_RE.finditer(part))
+        return part
+
+    _sub_outside_math(md, _scan)  # 수식 안의 부등호를 태그로 오인하지 않는다
+    if tags:
+        found = ", ".join(f"<{t}>" for t in sorted(tags))
+        notes.append(f"markdown still contains HTML ({found}) — some viewers "
+                     "force code mode on a file containing HTML")
