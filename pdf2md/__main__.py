@@ -20,12 +20,17 @@ from pdf2md.strict import ParseResult, Pdf2mdError, format_report
 # 사용법만 보고도 여정 전체가 보이게 — README를 다시 열 필요가 없어야 한다 (#28)
 USAGE = """\
 usage: python -m pdf2md <pdf-path> [--md | --notion [page-url]]
+       python -m pdf2md <file.md>  [--notion [page-url]]
 
   <pdf-path>            the PDF to convert (academic paper / report)
   (no flag)             asks where the result should go
   --md                  markdown only -> output/<name>.md + output/images/
   --notion <page-url>   Notion page + markdown, no questions asked
   --notion              same, but asks for the page URL
+
+  <file.md>             an already-converted markdown (e.g. output/<name>.md,
+                        edited to taste) -> uploaded to Notion as-is; images
+                        are taken from the images/ folder next to the file
 
 Notion mode needs NOTION_API_KEY in .env, and the target page must be
 shared with the `Automations` integration. An empty page also gets the
@@ -87,8 +92,16 @@ def main(
     if not pdf_path.is_file():  # 외부 입력은 경계에서 검증한다 (CLAUDE.md §7)
         # 런타임 메시지는 영어로 — 리포트(format_report)와 언어를 맞추고,
         # UTF-8이 아닌 콘솔에서도 항상 온전히 읽히게 한다
-        print(f"not a PDF file: {pdf_path}\n\n{USAGE}", file=sys.stderr)
+        print(f"no such file: {pdf_path}\n\n{USAGE}", file=sys.stderr)
         return 2
+
+    # md 입력 = 이미 변환(·편집)된 결과물 → 갈 곳은 Notion뿐 (#31)
+    md_input = pdf_path.suffix.lower() == ".md"
+    if md_input:
+        if mode == "md":
+            print(f"already markdown: {pdf_path}\n\n{USAGE}", file=sys.stderr)
+            return 2
+        mode = "notion"  # 대상 질문은 건너뛴다 — URL만 (필요하면) 묻는다
 
     # 물을 것은 파이프라인을 태우기 전에 전부 묻는다 — 파싱 후에 EOF로 죽지 않도록
     interactive = mode is None or (mode == "notion" and notion_url is None)
@@ -114,27 +127,41 @@ def main(
             return 2
 
     try:
-        # 긴 단계는 시작을 알린다 — 화면만 보고 어디쯤인지 알 수 있게 (#28)
-        print("parsing PDF (MinerU API; the first run takes minutes, "
-              "cached afterwards)...")
-        result = parse_pdf(pdf_path)
-        violations = gate_a(result.content_list)
-        print(format_report(violations))
-        if any(v.severity != "warning" for v in violations):
-            # 위반 = 내용 소실. output/을 쓰지 않고 멈춘다. 경고(이미지 폴백)는
-            # 내용이 남아 있으므로 리포트만 찍고 진행한다.
-            print("halt: recognition loss detected — nothing written to output/. "
-                  "To retry MinerU, delete the cache entry and rerun.", file=sys.stderr)
-            return 1
-        # 정제(PLAN.md Phase 3)는 output에만 적용한다 — 캐시는 MinerU 원본 그대로,
-        # 그래야 정제 규칙이 바뀌어도 API를 다시 태우지 않고 재생성할 수 있다
-        refined_md, notes = refine(result.markdown)
-        for note in notes:
-            print(f"refine: {note}", file=sys.stderr)
-        # output/ md를 Notion보다 먼저 쓴다 — 업로드가 실패해도 결과물은 온전히 남는다
-        md_path = cache.assemble_output(
-            dataclasses.replace(result, markdown=refined_md), pdf_path.stem)
-        print(f"-> {md_path}")
+        if md_input:
+            # 파싱·Gate A·정제 전부 건너뛴다 — 파일은 이미 정제된 출력물(사용자
+            # 편집 포함)이고, content_list 없이는 Gate A가 원리적으로 불가능하다.
+            # 한도 검사는 여전히 to_blocks 안에서 전부 이뤄진다.
+            try:
+                refined_md = pdf_path.read_text(encoding="utf-8")
+            except (OSError, UnicodeDecodeError) as e:
+                raise Pdf2mdError(f"cannot read markdown: {pdf_path} — {e}") from e
+            image_dir = pdf_path.parent / "images"  # assemble_output이 만드는 배치
+        else:
+            # 긴 단계는 시작을 알린다 — 화면만 보고 어디쯤인지 알 수 있게 (#28)
+            print("parsing PDF (MinerU API; the first run takes minutes, "
+                  "cached afterwards)...")
+            result = parse_pdf(pdf_path)
+            violations = gate_a(result.content_list)
+            print(format_report(violations))
+            if any(v.severity != "warning" for v in violations):
+                # 위반 = 내용 소실. output/을 쓰지 않고 멈춘다. 경고(이미지 폴백)는
+                # 내용이 남아 있으므로 리포트만 찍고 진행한다.
+                print("halt: recognition loss detected — nothing written to output/. "
+                      "To retry MinerU, delete the cache entry and rerun.",
+                      file=sys.stderr)
+                return 1
+            # 정제(PLAN.md Phase 3)는 output에만 적용한다 — 캐시는 MinerU 원본
+            # 그대로, 그래야 정제 규칙이 바뀌어도 API를 다시 태우지 않고 재생성할
+            # 수 있다
+            refined_md, notes = refine(result.markdown)
+            for note in notes:
+                print(f"refine: {note}", file=sys.stderr)
+            image_dir = result.image_dir
+            # output/ md를 Notion보다 먼저 쓴다 — 업로드가 실패해도 결과물은 온전히
+            # 남는다
+            md_path = cache.assemble_output(
+                dataclasses.replace(result, markdown=refined_md), pdf_path.stem)
+            print(f"-> {md_path}")
 
         if mode == "notion":
             if to_blocks is None:
@@ -145,7 +172,7 @@ def main(
                 count_children = count_children or notion_upload.count_children
 
             # 한도 검사는 전부 to_blocks 안 — 여기서 실패하면 네트워크는 안 탄 것
-            doc = to_blocks(refined_md, result.image_dir)
+            doc = to_blocks(refined_md, image_dir)
             for w in doc.warnings:
                 print(f"notion: {w}", file=sys.stderr)
 

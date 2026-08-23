@@ -32,6 +32,7 @@ python -m pdf2md <pdf-path>                      # 대화형 — 출력 대상�
 python -m pdf2md <pdf-path> --md                 # 묻지 않고 마크다운만
 python -m pdf2md <pdf-path> --notion <page-url>  # 묻지 않고 Notion + 마크다운
 python -m pdf2md <pdf-path> --notion             # 페이지 URL만 물어봄
+python -m pdf2md <file.md>  --notion <page-url>  # 이미 변환된(·편집한) md를 그대로 업로드
 ```
 
 실행 흐름: **PDF 해석**(첫 실행은 수 분, 결과는 `cache/`에 저장되어 재실행 시 즉시)
@@ -50,6 +51,19 @@ python -m pdf2md <pdf-path> --notion             # 페이지 URL만 물어봄
 
 마크다운은 Notion 업로드와 무관하게 항상 먼저 생성됩니다 — 업로드가 실패해도
 `output/`의 결과물은 온전합니다.
+
+### 변환 결과를 고쳐서 올리기 (md → Notion)
+
+`--md`로 변환한 뒤 `output/<이름>.md`를 손보고(요약 추가, 문단 정리 등) 그 파일을
+그대로 입력으로 주면, PDF 재해석 없이 **편집본이 그대로** Notion에 올라갑니다:
+
+```
+python -m pdf2md output/<이름>.md --notion <page-url>
+```
+
+이미지는 md 파일 옆의 `images/` 폴더에서 찾으므로, `output/` 밖으로 옮겼다면
+`images/`도 함께 옮기세요. 이 모드는 변환·검사 단계를 거치지 않습니다 — 파일
+내용에 대한 책임은 편집한 사람에게 있습니다.
 
 ### 메시지 읽는 법
 

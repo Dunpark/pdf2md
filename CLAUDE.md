@@ -45,7 +45,7 @@ gh issue list --repo Dunpark/pdf2md --state all --limit 10
 python -m pdf2md "Attention is all you need.pdf" --md     # → Gate A OK → output/{stem}.md + images/
                                                           #   캐시 히트 시 0.4s·네트워크 없음
 python -m pdf2md "Attention is all you need.pdf" --notion <page-url>  # → 위 + Notion 페이지 append
-python -m pytest tests/ -q                        # → 101 passed
+python -m pytest tests/ -q                        # → 105 passed
 
 python -m pdf2md.strict                           # → self-check passed, exit 0
 python -m pdf2md.mineru_api                       # → self-check passed (MockTransport, 네트워크 안 탐)
@@ -121,6 +121,7 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 | 〃 | #19 인용 → 참조 블록 앵커 링크 패치(블록당 1회, 실패는 경고). PLAN v3·이 문서 개정 |
 | 〃 | #28 README(사용자 관점)·CLI 사용여정(usage·대화형 안내·단계 표시) 정비 |
 | 〃 | #30 `reference/` 삭제 — Phase 4 자체 구현 완성으로 되살릴 가능성 소멸. bare pytest 함정도 함께 소멸 |
+| 〃 | #31 md 입력 → 바로 Notion 업로드 추가 — `--md`로 뽑은 md를 편집한 뒤 재해석 없이 올리는 경로. 파싱·Gate A·정제 건너뜀. 실전 업로드 육안 판정 대기 |
 
 ### v2 변경의 파급
 
@@ -165,8 +166,8 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 
 ### 다음 할 일
 
-- **#19 실전 업로드의 육안 판정 대기** — 수식 렌더·표 셀 값·이미지·인용 점프는
-  눈으로만 확인 가능하다 (§10).
+- **#19·#31 실전 업로드의 육안 판정 대기** — 수식 렌더·표 셀 값·이미지·인용 점프,
+  그리고 md 직접 업로드(#31)의 실물 결과는 눈으로만 확인 가능하다 (§10).
 - 열린 결정 두 개 **사용자 판정 대기** (PLAN.md Phase 2의 P4·P5): 저작권 각주의
   처분과 부록 제목의 헤딩화. 결정되면 규칙을 `refine.py`에 추가한다.
 - 그 외에는 다른 논문을 투입해 Gate A·정제·Notion 변환이 일반화되는지 보는 것이
@@ -194,6 +195,7 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 | 진입점 | 담당 |
 |---|---|
 | `python -m pdf2md <pdf> [--md \| --notion [url]]` | 유일한 진입점. 인자 파싱 → 대상 선택(플래그 없으면 대화형) → 파싱(캐시/API) → Gate A → 정제 → output/ → (--notion 시) 블록 변환 → 업로드 |
+| `python -m pdf2md <file.md> [--notion [url]]` | 같은 진입점의 md 입력 형태(#31). 파싱·Gate A·정제·output 조립을 전부 건너뛰고 파일 내용 그대로 블록 변환 → 업로드. 이미지는 md 옆 `images/`. 편집한 output md를 재업로드하는 용도 |
 
 ### 런타임 흐름
 
@@ -286,7 +288,7 @@ Python  3.13.15
 ```bash
 python -m pdf2md.strict                          # strict.py 자체 점검 — passed, exit 0
 python -m pdf2md.mineru_api                      # API 클라이언트 자체 점검 (MockTransport) — passed
-python -m pytest tests/ -q                       # 루트 스위트 — 101 passed
+python -m pytest tests/ -q                       # 루트 스위트 — 105 passed
 python -m pdf2md "Attention is all you need.pdf" --md      # 끝까지 — Gate A OK → output/ 조립
 python -m pdf2md "Attention is all you need.pdf" --notion <page-url>  # 위 + Notion append (실 API)
 ```
