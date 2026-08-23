@@ -222,16 +222,19 @@ def _convert_tables(md: str, notes: list[str], images: list[str] | None = None,
                          "(first cell differs) — kept as a pipe table")
             return _pipe(html)
         as_image += 1
-        return f"![]({images[i]})"
+        # 그림 + 표를 나란히 낸다 (#44). 그림은 배치의 진실(병합·볼드·색)을 지고,
+        # 표는 읽을 수 있는 값을 진다 — 뷰어는 이미지를 본문 폭에 맞춰 줄이므로
+        # 24행짜리 표는 행 높이가 14px가 되어 글자도 셀 안 수식도 안 보인다.
+        # 표를 함께 두면 셀 텍스트·수식·인용 링크도 md에 남는다.
+        return f"![]({images[i]})\n\n{_pipe(html)}"
 
     result = _TABLE_RE.sub(_sub, md)
     if as_image:
-        # 병합된 표만 원본 렌더로 낸다. 대신 그 표의 셀 텍스트가 md에서 빠진다 —
-        # 검색·복사가 안 되고 Notion에도 그림으로 올라간다. 값은 cache/에 남아
-        # 있으니 규칙이 바뀌면 API 없이 되살릴 수 있다.
-        notes.append(f"{as_image} of {total} table(s) rendered as an image (merged "
-                     "cells) — merges and bold/underline/colour survive, but their "
-                     "cell text is not in the markdown")
+        # 병합된 표에만 원본 렌더를 덧붙인다 — 마크다운이 못 그리는 병합·서식이
+        # 거기 살아 있다. 표 자체는 그대로 두므로 셀 텍스트는 잃지 않는다 (#44).
+        notes.append(f"{as_image} of {total} table(s) got their render image "
+                     "alongside the table (merged cells) — the image carries the "
+                     "merges and bold/underline/colour the table cannot")
     return result
 
 

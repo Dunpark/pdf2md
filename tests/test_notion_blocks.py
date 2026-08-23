@@ -91,12 +91,13 @@ def test_equation_1000_limit(tmp_path):
         to_blocks("$$\n" + "x" * 1001 + "\n$$", tmp_path)
 
 
-def test_odd_dollar_is_plain_text_with_warning(tmp_path):
-    # 수식 경계를 추정하지 않는다 — 홀수 $는 줄 전체 평문 + 경고
+def test_odd_dollar_is_plain_text(tmp_path):
+    # 수식 경계를 추정하지 않는다 — 홀수 $는 줄 전체 평문.
+    # $가 하나면 짝지을 수식이 없어 평문이 정답이므로 경고하지 않는다 (#44)
     doc = to_blocks("price is $5 today", tmp_path)
     assert doc.blocks[0]["paragraph"]["rich_text"] == [
         {"type": "text", "text": {"content": "price is $5 today"}}]
-    assert any("odd" in w for w in doc.warnings)
+    assert not any("odd" in w for w in doc.warnings)
 
 
 # ---------- 이미지 ----------
@@ -281,3 +282,94 @@ def test_first_h1_becomes_doc_title(tmp_path):
 def test_no_h1_leaves_title_empty(tmp_path):
     doc = to_blocks("just a paragraph\n\n## section\n", tmp_path)
     assert doc.title == ""
+
+
+# ---------- author-year 인용 경로 (#44) ----------
+
+def test_author_year_reference_merges_and_targets_by_slug(tmp_path):
+    # 실측: 숫자형만 인식해서 author-year 미니 헤딩 43개가 heading_3으로 뭉개졌고
+    # ref_targets가 비어 인용이 갈 곳을 잃었다 (#44)
+    md = ("## References\n\n"
+          "###### Starace et al. 2025\nG. Starace, O. Jaffe. Paperbench. 2025.\n\n"
+          "###### Schmidgall and Moor 2025\nS. Schmidgall and M. Moor. AgentRxiv. 2025.\n")
+    doc = to_blocks(md, tmp_path)
+    assert [b["type"] for b in doc.blocks] == ["heading_2", "paragraph", "paragraph"]
+    assert doc.ref_targets == {"starace-et-al-2025": 1, "schmidgall-and-moor-2025": 2}
+    # 항목 전문은 그대로 — 숫자형과 달리 앞에 라벨을 덧붙이지 않는다
+    assert doc.blocks[1]["paragraph"]["rich_text"][0]["text"]["content"] == \
+        "G. Starace, O. Jaffe. Paperbench. 2025."
+    assert not [w for w in doc.warnings if "clamped" in w]
+
+
+def test_author_year_citation_recorded_not_dropped(tmp_path):
+    doc = to_blocks("prior work ([Starace et al., 2025](#starace-et-al-2025)).", tmp_path)
+    rt = doc.blocks[0]["paragraph"]["rich_text"]
+    assert "".join(e["text"]["content"] for e in rt) == \
+        "prior work (Starace et al., 2025)."
+    assert doc.citations == [(0, 1, "starace-et-al-2025")]
+    assert not [w for w in doc.warnings if "dropped unsupported link" in w]
+
+
+def test_numeric_reference_path_unchanged(tmp_path):
+    md = "## References\n\n###### [1]\nJimmy Lei Ba, layer norm.\n"
+    doc = to_blocks(md, tmp_path)
+    assert doc.ref_targets == {"1": 1}
+    assert doc.blocks[1]["paragraph"]["rich_text"][0]["text"]["content"] == \
+        "[1] Jimmy Lei Ba, layer norm."
+
+
+def test_citation_and_reference_keys_meet(tmp_path):
+    md = ("body ([Chen et al., 2026a](#chen-et-al-2026a)).\n\n## References\n\n"
+          "###### Chen et al. 2026a\nG. Chen. Beyondswe. 2026a.\n")
+    doc = to_blocks(md, tmp_path)
+    (_, _, key), = doc.citations
+    assert key in doc.ref_targets  # 이게 어긋나면 링크가 갈 곳이 없다
+
+
+def test_unknown_anchor_still_dropped_with_warning(tmp_path):
+    doc = to_blocks("see [x](mailto:a@b.c) now", tmp_path)
+    assert doc.citations == []
+    assert [w for w in doc.warnings if "dropped unsupported link" in w]
+
+
+# ---------- 이스케이프된 달러 (#44) ----------
+
+def test_escaped_dollar_is_not_a_math_delimiter(tmp_path):
+    # 실측: "costs approximately \$832" 한 줄이 통째로 평문으로 떨어졌다
+    doc = to_blocks(r"a full evaluation costs approximately \$832, which limits it.",
+                    tmp_path)
+    rt = doc.blocks[0]["paragraph"]["rich_text"]
+    assert not [w for w in doc.warnings if "odd number of" in w]
+    assert "".join(e["text"]["content"] for e in rt) == \
+        "a full evaluation costs approximately $832, which limits it."
+
+
+def test_escaped_dollar_beside_real_math(tmp_path):
+    doc = to_blocks(r"cost \$832 with $d_k$ dims", tmp_path)
+    rt = doc.blocks[0]["paragraph"]["rich_text"]
+    assert [e["type"] for e in rt] == ["text", "equation", "text"]
+    assert rt[0]["text"]["content"] == "cost $832 with "
+    assert rt[1]["equation"]["expression"] == "d_k"
+
+
+def test_genuinely_odd_dollar_still_warns(tmp_path):
+    # $가 셋이면 짝지으려던 수식이 실재한다 — 그건 알린다
+    doc = to_blocks("broken $a$ and $b here", tmp_path)
+    assert [w for w in doc.warnings if "odd number of" in w]
+
+
+def test_lone_dollar_is_currency_not_a_warning(tmp_path):
+    # 실측: 표의 금액 칸 `$33.05` 7건이 경고를 냈다. 짝지을 수식이 없으므로
+    # 평문이 정답이고, 경고는 리포트를 덮는 소음일 뿐이다 (#44)
+    doc = to_blocks("| Avg Cost |\n|---|\n| $33.05 |\n", tmp_path)
+    assert not [w for w in doc.warnings if "odd number of" in w]
+    cells = doc.blocks[0]["table"]["children"][1]["table_row"]["cells"]
+    assert cells[0][0]["text"]["content"] == "$33.05"
+
+
+def test_plain_h6_in_the_body_stays_a_heading(tmp_path):
+    # R2의 참조 앵커 형태가 아니면 문단으로 삼키지 않는다 — 조용한 구조 손실 금지
+    doc = to_blocks("###### Implementation notes\nsome prose\n", tmp_path)
+    assert doc.blocks[0]["type"] == "heading_3"
+    assert doc.blocks[1]["type"] == "paragraph"
+    assert doc.ref_targets == {}
