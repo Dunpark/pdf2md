@@ -224,3 +224,26 @@ def test_notion_flag_without_url_asks_url_only(tmp_path, monkeypatch):
     assert code == 0
     assert len(asked) == 1  # URL만 묻는다 — 출력 대상은 이미 정해져 있다
     assert uploaded["url"] == "https://notion.so/x"
+
+
+# ---------- #28: 자기설명적 CLI 여정 ----------
+
+def test_usage_block_lists_all_forms(capsys):
+    assert main([]) == 2
+    err = capsys.readouterr().err
+    assert "--md" in err and "--notion" in err  # 네 형태가 전부 보인다
+    assert "markdown" in err.lower()  # 플래그 이름만이 아니라 뜻도 한 줄씩
+
+
+def test_interactive_shows_destination_menu(tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr("builtins.input", lambda prompt="": "1")
+    _run_main_in(tmp_path, CLEAN, argv_tail=[])
+    out = capsys.readouterr().out
+    assert "output/" in out or "output\\" in out  # 1번이 무엇을 만드는지 미리 보여준다
+    assert "Notion" in out  # 2번의 의미도
+
+
+def test_parse_progress_line_appears(tmp_path, capsys):
+    _run_main_in(tmp_path, CLEAN)
+    out = capsys.readouterr().out
+    assert "parsing" in out.lower()  # 긴 단계가 무엇인지 화면만 보고 알 수 있다
