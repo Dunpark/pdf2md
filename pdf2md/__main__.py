@@ -17,7 +17,19 @@ from pdf2md.gate_a import gate_a
 from pdf2md.refine import refine
 from pdf2md.strict import ParseResult, Pdf2mdError, format_report
 
-USAGE = "usage: python -m pdf2md <pdf-path> [--md | --notion [page-url]]"
+# 사용법만 보고도 여정 전체가 보이게 — README를 다시 열 필요가 없어야 한다 (#28)
+USAGE = """\
+usage: python -m pdf2md <pdf-path> [--md | --notion [page-url]]
+
+  <pdf-path>            the PDF to convert (academic paper / report)
+  (no flag)             asks where the result should go
+  --md                  markdown only -> output/<name>.md + output/images/
+  --notion <page-url>   Notion page + markdown, no questions asked
+  --notion              same, but asks for the page URL
+
+Notion mode needs NOTION_API_KEY in .env, and the target page must be
+shared with the `Automations` integration. An empty page also gets the
+paper's title automatically."""
 
 
 def parse_pdf(
@@ -75,13 +87,18 @@ def main(
     if not pdf_path.is_file():  # 외부 입력은 경계에서 검증한다 (CLAUDE.md §7)
         # 런타임 메시지는 영어로 — 리포트(format_report)와 언어를 맞추고,
         # UTF-8이 아닌 콘솔에서도 항상 온전히 읽히게 한다
-        print(f"not a PDF file: {pdf_path}", file=sys.stderr)
+        print(f"not a PDF file: {pdf_path}\n\n{USAGE}", file=sys.stderr)
         return 2
 
     # 물을 것은 파이프라인을 태우기 전에 전부 묻는다 — 파싱 후에 EOF로 죽지 않도록
     interactive = mode is None or (mode == "notion" and notion_url is None)
     if mode is None:
-        ans = _ask("Output destination? [1] markdown only  [2] Notion + markdown: ")
+        # 고르기 전에 각 선택지가 무엇을 만드는지 먼저 보여준다 (#28)
+        print("Where should the result go?")
+        print("  1. markdown only     -> output/<name>.md + output/images/")
+        print("  2. Notion + markdown -> appends the paper to a Notion page,"
+              " markdown is written too")
+        ans = _ask("Choose 1 or 2: ")
         if ans == "1":
             mode = "md"
         elif ans == "2":
@@ -90,12 +107,16 @@ def main(
             print(USAGE, file=sys.stderr)
             return 2
     if mode == "notion" and not notion_url:
-        notion_url = _ask("Notion page URL: ")
+        notion_url = _ask("Notion page URL (use an empty page; share it with the "
+                          "`Automations` integration first): ")
         if not notion_url:
             print(USAGE, file=sys.stderr)
             return 2
 
     try:
+        # 긴 단계는 시작을 알린다 — 화면만 보고 어디쯤인지 알 수 있게 (#28)
+        print("parsing PDF (MinerU API; the first run takes minutes, "
+              "cached afterwards)...")
         result = parse_pdf(pdf_path)
         violations = gate_a(result.content_list)
         print(format_report(violations))
@@ -141,6 +162,8 @@ def main(
                     print(f"notion: page already has {existing} block(s); "
                           "appending after them.", file=sys.stderr)
 
+            print(f"uploading {len(doc.blocks)} blocks and {len(doc.images)} "
+                  "image(s) to Notion (rate-limited, about a minute)...")
             page = upload(doc, notion_url)
             print(f"-> {page}")
         return 0
