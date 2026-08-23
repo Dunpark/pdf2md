@@ -42,14 +42,10 @@ gh issue list --repo Dunpark/pdf2md --state all --limit 10
 실제로 실행해 확인한 명령만 적는다.
 
 ```bash
-# 기존 Notion 파서 회귀 확인 — 반드시 reference/ 안에서 실행한다.
-# 루트에서 bare `python -m pytest` 를 돌리면 reference/tests/ 를 수집하다 실패한다
-# (그 테스트들이 `notes.*` 를 임포트하는데 루트에는 그 경로가 없다).
 python -m pdf2md "Attention is all you need.pdf" --md     # → Gate A OK → output/{stem}.md + images/
                                                           #   캐시 히트 시 0.4s·네트워크 없음
 python -m pdf2md "Attention is all you need.pdf" --notion <page-url>  # → 위 + Notion 페이지 append
-python -m pytest tests/ -q                        # → 93 passed (루트에서. bare pytest 금지 — 아래 함정 참조)
-(cd reference && python -m pytest tests/ -q)     # → 36 passed
+python -m pytest tests/ -q                        # → 101 passed
 
 python -m pdf2md.strict                           # → self-check passed, exit 0
 python -m pdf2md.mineru_api                       # → self-check passed (MockTransport, 네트워크 안 탐)
@@ -118,18 +114,21 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 | 〃 | Wave 2를 worktree 격리 에이전트 3개로 병렬 수행 → PR #9(#4)·#10(#3)·#11(#5) 전부 머지. 22 tests. 실 API·실 ZIP은 여전히 미검증(#6 몫) |
 | 〃 | #6 CLI 통합. 첫 실 API 실행에서 Gate A가 수식 5건 오탐 → 실측 스키마(equation은 `text` 키)로 gate_a 수정, `chart` 타입 추가. PLAN 스키마 표 실측 기준으로 개정. 재실행 Gate A OK → 실물 md 확보 |
 | 〃 | #7 판정: 내용 손실 0, 표현 3건 깨짐(P1 HTML표·P2 참조링크·P3 헤딩 평탄화, 사용자+PDF 대조로 확정). P4·P5 보류. PLAN Phase 2·3 확정 후 #13으로 `refine.py` 구현 — 수식 불가침·불확실 시 원본 유지+경고 |
-| 〃 | Orca 실측으로 R2 재설계(HTML 앵커→References 번호 미니 헤딩+슬러그 링크, §11.10). 사용자 확인: P1 표·P2 점프 해결. P6(볼드 소실)은 MinerU 한계로 종결 — 스타일 정보가 응답 어디에도 없음(PLAN Phase 2) |
-| 2026-08-23 | **Notion 출력 경로 부활 결정. PLAN v3 (Phase 4).** 마크다운 직접 입력 API는 기각(append 미지원 — §11.11), `reference/` 이식도 기각(이미지·링크 미지원, 2000자 잘라내기) |
+| 〃 | Orca 실측으로 R2 재설계(HTML 앵커→References 번호 미니 헤딩+슬러그 링크, §11.9). 사용자 확인: P1 표·P2 점프 해결. P6(볼드 소실)은 MinerU 한계로 종결 — 스타일 정보가 응답 어디에도 없음(PLAN Phase 2) |
+| 2026-08-23 | **Notion 출력 경로 부활 결정. PLAN v3 (Phase 4).** 마크다운 직접 입력 API는 기각(append 미지원 — §11.10), `reference/` 이식도 기각(이미지·링크 미지원, 2000자 잘라내기) |
 | 〃 | #15 probe 실측 4건: 블록 앵커 점프 ✔, 표 셀 equation 바이트 동일 생존 ✔, 13열 표 수락 ✔, `\tag{1}` 렌더 ✔ (PLAN Phase 4) |
 | 〃 | #16~#18을 계약 기점 커밋 공유 + worktree 병렬로 구현·머지. `notion_blocks`(순수 변환, 한도 검사 전부)·`notion_upload`(HTTP만)·CLI 대상 선택(`--md`/`--notion`/대화형). `--md` 출력은 종전과 바이트 동일 확인 |
 | 〃 | #19 인용 → 참조 블록 앵커 링크 패치(블록당 1회, 실패는 경고). PLAN v3·이 문서 개정 |
+| 〃 | #28 README(사용자 관점)·CLI 사용여정(usage·대화형 안내·단계 표시) 정비 |
+| 〃 | #30 `reference/` 삭제 — Phase 4 자체 구현 완성으로 되살릴 가능성 소멸. bare pytest 함정도 함께 소멸 |
 
 ### v2 변경의 파급
 
 - **Gate B 전체 삭제.** 마크다운엔 길이 한도도 병합셀 제약도 없다. 2000자 분할·
   1000자 halt·미지원 마크업 sniffer·HTML→Notion 표 변환·업로더가 전부 불필요.
 - **`reference/`가 통째로 무용지물.** HANDOFF의 전제였던 "완성된 Notion writer
-  재사용"이 무효. 방치하되 삭제하지 않는다(되살릴 가능성 보존).
+  재사용"이 무효. 한동안 보류로 남겨뒀다가 Phase 4가 자체 구현으로 완성된 뒤
+  2026-08-23에 삭제했다(#30). 필요하면 git 히스토리에서 복원한다.
 - **규모 축소.** 우리 도구가 더하는 것은 **Gate A + 정제** 둘뿐. 예상 200~300줄.
 
 ### 검증 완료된 사실 (재확인 불필요)
@@ -184,8 +183,7 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 |---|---|
 | (루트) | 설계 문서와 규약 |
 | `pdf2md/` | 소스: `__main__`(CLI·조립·출력 대상 선택) · `strict`(공유 타입) · `mineru_api`(네트워크만) · `cache`(디스크만) · `gate_a`(손실 감지) · `refine`(Phase 3 정제, output에만 적용 — 캐시는 원본 유지) · `notion_blocks`(Phase 4, 정제 md→NotionDoc, 순수·한도 검사 전부) · `notion_upload`(Phase 4, HTTP만) |
-| `tests/` | 루트 pytest 스위트 (`test_cache` · `test_gate_a` · `test_cli` · `test_refine` · `test_notion_blocks` · `test_notion_upload`). `reference/tests/`와 절대 섞어 돌리지 않는다 |
-| `reference/` | **보류된 Notion 경로의 원본.** 외부 프로젝트에서 복사해 온 읽기 전용 자료. 이번 계획에서 한 줄도 쓰지 않는다. 자체 pytest 스위트를 가지며 **반드시 이 디렉터리 안에서 실행**해야 한다(§1) |
+| `tests/` | 루트 pytest 스위트 (`test_cache` · `test_gate_a` · `test_cli` · `test_refine` · `test_notion_blocks` · `test_notion_upload`) |
 | `cache/` | MinerU 응답 캐시 `{sha256(pdf)}/`. git 추적 금지. 지워도 안전하지만 지우면 API 할당량을 다시 태운다 |
 | `output/` | 최종 산출물 `{stem}.md` + `images/`. git 추적 금지. 언제든 재생성 가능 |
 
@@ -208,11 +206,6 @@ PDF ─[MinerU API v4]→ cache/{sha256}/ ─[Gate A]→ [정제]→ output/{이
 **Gate A가 `content_list.json`을 보는 이유** — 손실은 JSON에만 흔적이 남는다.
 md에는 페이지 경계도 빈 블록도 없어서 "3페이지짜리 표가 통째로 증발"이 md에서는
 그냥 매끄러운 문서로 보인다. **md로 내려오면 원리적으로 감지가 불가능하다.**
-
-### 테스트
-
-`tests/`는 루트 pytest로 돌린다. `reference/tests/`는 **별도 스위트**이며
-경로 문제로 루트에서 수집되면 실패한다(§1). 두 스위트를 한 번에 돌리지 않는다.
 
 ---
 
@@ -293,8 +286,7 @@ Python  3.13.15
 ```bash
 python -m pdf2md.strict                          # strict.py 자체 점검 — passed, exit 0
 python -m pdf2md.mineru_api                      # API 클라이언트 자체 점검 (MockTransport) — passed
-python -m pytest tests/ -q                       # 루트 스위트 — 93 passed
-(cd reference && python -m pytest tests/ -q)     # 보류된 참조 코드 회귀 — 36 passed
+python -m pytest tests/ -q                       # 루트 스위트 — 101 passed
 python -m pdf2md "Attention is all you need.pdf" --md      # 끝까지 — Gate A OK → output/ 조립
 python -m pdf2md "Attention is all you need.pdf" --notion <page-url>  # 위 + Notion append (실 API)
 ```
@@ -316,43 +308,40 @@ CI가 없다. 모든 검증은 로컬에서 수동으로 이뤄진다.
 
 ## §11. 함정 (겪은 것만 적는다)
 
-1. **루트에서 bare `python -m pytest` 를 돌리면 실패한다.** `reference/tests/` 를
-   수집하는데 그 테스트들은 `notes.*` 를 임포트한다. 항상 경로를 명시하거나
-   `reference/` 안에서 실행한다.
-2. **Bash의 `/tmp`와 Windows Python의 `/tmp`는 다른 경로다.** 파이프라인 중간값을
+1. **Bash의 `/tmp`와 Windows Python의 `/tmp`는 다른 경로다.** 파이프라인 중간값을
    `/tmp`로 넘기면 조용히 실패한다. 임시파일은 지정된 스크래치패드 경로를 쓴다.
    (이것 때문에 Notion 검증 블록이 안 지워지고 페이지에 남은 적 있음)
-3. **Notion 404 = "없음"과 "공유 안 됨"을 구분하지 않는다.** 통합 연결 문제로
+2. **Notion 404 = "없음"과 "공유 안 됨"을 구분하지 않는다.** 통합 연결 문제로
    단정하기 전에 `POST /v1/search`로 제목 검색을 해본다. 실제로 URL의 ID가 틀렸던
    적이 있다.
-4. **HANDOFF.md는 더 이상 지침이 아니다.** 전제("Markdown→Notion은 완성됐으니
+3. **HANDOFF.md는 더 이상 지침이 아니다.** 전제("Markdown→Notion은 완성됐으니
    재사용")가 v2에서 무효화됐다. 역사적 기록으로만 읽고 지침은 PLAN.md를 따른다.
-5. **MinerU는 표를 HTML `<table>`로 낸다.** 마크다운 출력에서는 그대로 두면 되지만
+4. **MinerU는 표를 HTML `<table>`로 낸다.** 마크다운 출력에서는 그대로 두면 되지만
    (뷰어가 렌더함), 파이프 테이블로 바꿀지는 Phase 2에서 실제 출력을 보고 정한다.
-6. **MinerU Agent API는 쓸 수 없다.** 토큰이 필요 없어 편해 보이지만 markdown만 주고
+5. **MinerU Agent API는 쓸 수 없다.** 토큰이 필요 없어 편해 보이지만 markdown만 주고
    `content_list.json`을 주지 않아 Gate A가 불가능하다. v4 Precise API + 토큰 필수.
-7. **로컬 폴더명(`PDF_to_Notion`)과 원격 저장소명(`pdf2md`)이 다르다.** 의도된
+6. **로컬 폴더명(`PDF_to_Notion`)과 원격 저장소명(`pdf2md`)이 다르다.** 의도된
    것이며 git 동작에 영향 없다.
-8. **Windows 콘솔(cp949)에서 유니코드 출력이 `UnicodeEncodeError`로 죽는다.**
+7. **Windows 콘솔(cp949)에서 유니코드 출력이 `UnicodeEncodeError`로 죽는다.**
    리포트의 em-dash로 실제 크래시가 났다. `__main__.py`가 stdout/stderr를
    `errors="replace"`로 재구성해 막는다 — 새 출력 경로를 만들면 같은 함정을 조심.
-9. **PLAN의 API 스키마는 문서 기반 초판이 실측과 달랐다** (equation이 `content`가
+8. **PLAN의 API 스키마는 문서 기반 초판이 실측과 달랐다** (equation이 `content`가
    아니라 `text` 키, `chart` 등 미기재 타입 존재 → Gate A 오탐 5건). 현재 표는
    실측(2026-08-22) 기준으로 개정됨. 새 필드에 의존하기 전에 캐시의 실물
    `content_list.json`을 먼저 본다.
-10. **사용자의 뷰어는 Orca(디폴트 뷰)다.** 실측: HTML `<a id>` 앵커로는 점프가
-    안 되고, **각주 문법(`[^N]:`)이 한 줄이라도 있으면 파일 전체가 코드 모드로
-    강제**되며, GitHub식 헤딩 슬러그 링크만 문서 내 점프가 된다. md 출력 규칙을
-    바꿀 때 이 세 가지를 전제로 한다 (PLAN.md Phase 3 R2).
-11. **Notion의 마크다운 직접 입력은 append를 지원하지 않는다.** `markdown` 입력은
+9. **사용자의 뷰어는 Orca(디폴트 뷰)다.** 실측: HTML `<a id>` 앵커로는 점프가
+   안 되고, **각주 문법(`[^N]:`)이 한 줄이라도 있으면 파일 전체가 코드 모드로
+   강제**되며, GitHub식 헤딩 슬러그 링크만 문서 내 점프가 된다. md 출력 규칙을
+   바꿀 때 이 세 가지를 전제로 한다 (PLAN.md Phase 3 R2).
+10. **Notion의 마크다운 직접 입력은 append를 지원하지 않는다.** `markdown` 입력은
     `POST /v1/pages`(새 페이지 생성) 전용이고 `PATCH /v1/blocks/{id}/children`은
     받지 않는다. 매핑표에 인라인 수식·블록 링크·로컬 이미지도 없다 — 그래서
     `notion_blocks.py`가 존재한다 (PLAN.md Phase 4).
-12. **`table_row`의 id는 append 응답에 없다.** 응답 `results`는 1단계 자식만 준다.
+11. **`table_row`의 id는 append 응답에 없다.** 응답 `results`는 1단계 자식만 준다.
     표 셀 안 인용은 그래서 링크 패치가 불가능하다 — 평문 + 경고로 남긴다.
-13. **Notion은 LaTeX를 서버에서 검증하지 않는다.** 깨진 수식도 200을 받고
+12. **Notion은 LaTeX를 서버에서 검증하지 않는다.** 깨진 수식도 200을 받고
     클라이언트에서만 빨간 에러로 뜬다. 업로드 후 렌더 확인은 눈으로만 가능하다.
-14. **Notion API 404는 "없음"과 "통합에 공유 안 됨"을 구분하지 않는다** (함정 3과
+13. **Notion API 404는 "없음"과 "통합에 공유 안 됨"을 구분하지 않는다** (함정 2와
     같은 원인). 에러 메시지가 `Automations` 통합 공유를 안내하게 해뒀다.
 
 ---
