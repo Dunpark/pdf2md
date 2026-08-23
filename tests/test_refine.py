@@ -37,7 +37,10 @@ def test_unparseable_table_kept_as_is_with_warning():
     html = "<table>깨진 표, 행이 없다</table>"
     md, notes = refine(html)
     assert html in md  # 원본 무손실
-    assert len(notes) == 1 and "table" in notes[0]
+    (table_note,) = [n for n in notes if n.startswith("table left as HTML")]
+    assert "could not convert" in table_note
+    # R5도 함께 운다 — 변환 못 한 표는 HTML로 남아 뷰어를 코드 모드로 만든다 (#38)
+    assert [n for n in notes if "HTML (<table>)" in n]
 
 
 def test_cell_pipe_escaped_and_entities_unescaped():
@@ -137,3 +140,65 @@ def test_unnumbered_heading_with_a_dot_is_left_alone():
     src = "## References\n\n## Acknowledgements\n"
     md, _ = refine(src)
     assert md == src
+
+
+# ---------- R4: <sup> 해제 (#38) ----------
+
+def test_superscript_digits_become_unicode():
+    md, notes = refine("See footnote<sup>4</sup> and note<sup>12</sup>.")
+    assert md == "See footnote⁴ and note¹².", md
+    assert "<sup>" not in md
+
+
+def test_superscript_symbols_keep_the_bare_character():
+    # ∗ † ‡ 는 유니코드 위첨자 자형이 없다 — 문자만 남기고 태그만 벗긴다
+    md, _ = refine("Ashish Vaswani<sup>∗</sup> Aidan Gomez<sup>∗</sup> <sup>†</sup>")
+    assert md == "Ashish Vaswani∗ Aidan Gomez∗ †"
+
+
+def test_superscript_conversion_is_one_aggregated_note():
+    # 태그마다 한 줄이면 11줄 소음이 된다 — 실행당 한 줄로 모은다
+    md, notes = refine("a<sup>1</sup>b<sup>2</sup>c<sup>3</sup>")
+    assert md == "a¹b²c³"
+    assert len(notes) == 1 and "3" in notes[0] and "superscript" in notes[0]
+
+
+def test_no_superscript_means_no_note():
+    _, notes = refine("plain text\n")
+    assert notes == []
+
+
+def test_superscript_inside_math_is_untouched():
+    # 수식은 어떤 규칙으로도 건드리지 않는다 (Attention 논문 79행에 <sup>과 $가 공존)
+    src = "value $a<sup>4</sup>b$ and outside<sup>4</sup>\n"
+    md, _ = refine(src)
+    assert "$a<sup>4</sup>b$" in md
+    assert "outside⁴" in md
+
+
+def test_superscript_inside_display_math_is_untouched():
+    src = "$$\nx<sup>2</sup>\n$$\n\ntext<sup>2</sup>\n"
+    md, _ = refine(src)
+    assert "x<sup>2</sup>" in md
+    assert "text²" in md
+
+
+# ---------- R5: 남은 HTML 경고 (#38) ----------
+
+def test_leftover_html_is_warned_once_per_tag():
+    md, notes = refine("line<br>one<br>two<i>three</i>\n")
+    assert "<br>" in md  # 내용은 그대로 둔다 — 확신 없는 변환은 하지 않는다
+    html_notes = [n for n in notes if "HTML" in n]
+    assert len(html_notes) == 1
+    assert "br" in html_notes[0] and "i" in html_notes[0]
+    assert "code mode" in html_notes[0]
+
+
+def test_clean_markdown_gets_no_html_warning():
+    md, notes = refine("# Title\n\n| a | b |\n|---|---|\n| 1 | 2 |\n\n$a < b$ and 3<4\n")
+    assert [n for n in notes if "HTML" in n] == []
+
+
+def test_converted_table_leaves_no_html_warning():
+    _, notes = refine("<table><tr><td>A</td></tr><tr><td>1</td></tr></table>")
+    assert notes == []

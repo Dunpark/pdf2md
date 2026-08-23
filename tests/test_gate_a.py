@@ -140,7 +140,7 @@ def test_coverage_ignores_formatting_differences():
     # md는 이스케이프·줄바꿈·공백을 바꾼다 — 영숫자만 비교해 오탐을 만들지 않는다
     blocks = [{"type": "page_footnote", "page_idx": 0,
                "text": "<sup>∗</sup>Equal Contributions. Corresponding authors."}]
-    md = "text before\n\n<sup>\*</sup>Equal   Contributions.\nCorresponding authors.\n"
+    md = "text before\n\n<sup>\\*</sup>Equal   Contributions.\nCorresponding authors.\n"
     assert gate_a(blocks, md) == []
 
 
