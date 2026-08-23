@@ -16,6 +16,7 @@ from html.parser import HTMLParser
 
 _TABLE_RE = re.compile(r"<table\b.*?</table>", re.DOTALL | re.IGNORECASE)
 _FIRST_CELL_RE = re.compile(r"<t[dh][^>]*>(.*?)</t[dh]>", re.DOTALL | re.IGNORECASE)
+_MERGE_ATTR_RE = re.compile(r"\b(?:row|col)span\s*=\s*[\"']?(\d+)", re.IGNORECASE)
 _INLINE_MATH_RE = re.compile(r"\$[^$\n]*\$")
 _CITATION_RE = re.compile(r"\[(\d+(?:,\s*\d+)*)\]")
 _REF_HEADING_RE = re.compile(r"^#{1,6}\s+References\s*$")
@@ -183,11 +184,19 @@ def _first_cell(html: str) -> str | None:
     return " ".join(re.sub(r"<[^>]+>", "", m.group(1)).split()) if m else None
 
 
+def _has_merged_cells(html: str) -> bool:
+    """rowspan/colspan이 1보다 큰 칸이 있는가 — 이미지로 낼지 가르는 유일한 기준.
+
+    추측이 아니라 MinerU가 준 속성 그대로다. 실측(2026-08-23): 두 논문의 표
+    7개 중 5개가 병합 있음, 2개가 없음.
+    """
+    return any(int(n) > 1 for n in _MERGE_ATTR_RE.findall(html))
+
+
 def _convert_tables(md: str, notes: list[str], images: list[str] | None = None,
                     bodies: list[str] | None = None) -> str:
     images, bodies = images or [], bodies or []
-    order = 0
-    as_image = 0
+    order = as_image = total = 0
 
     def _pipe(html: str) -> str:
         try:
@@ -197,9 +206,14 @@ def _convert_tables(md: str, notes: list[str], images: list[str] | None = None,
             return html
 
     def _sub(m: re.Match) -> str:
-        nonlocal order, as_image
+        nonlocal order, as_image, total
         html, i = m.group(0), order
-        order += 1
+        order += 1  # 표로 남긴 표도 자리를 차지한다 — 짝은 content_list 순서다
+        total += 1
+        if not _has_merged_cells(html):
+            # 병합이 없으면 파이프 테이블이 더 낫다 — 검색·복사되고 셀 안 수식이
+            # 렌더된다. 이미지로 바꾸면 얻는 것 없이 셀 텍스트만 잃는다.
+            return _pipe(html)
         if i >= len(images) or not images[i]:
             return _pipe(html)  # 짝이 없다 — 종전 경로
         if i < len(bodies) and _first_cell(html) != _first_cell(bodies[i]):
@@ -212,12 +226,12 @@ def _convert_tables(md: str, notes: list[str], images: list[str] | None = None,
 
     result = _TABLE_RE.sub(_sub, md)
     if as_image:
-        # 마크다운은 병합도 볼드도 못 그리므로 원본 렌더를 쓴다. 대신 셀 텍스트가
-        # md에서 빠진다 — 검색·복사가 안 되고 Notion에도 그림으로 올라간다.
-        # 값은 cache/에 남아 있으니 규칙이 바뀌면 API 없이 되살릴 수 있다.
-        notes.append(f"{as_image} table(s) rendered as an image — merges and "
-                     "bold/underline/colour survive, but the cell text is not "
-                     "in the markdown")
+        # 병합된 표만 원본 렌더로 낸다. 대신 그 표의 셀 텍스트가 md에서 빠진다 —
+        # 검색·복사가 안 되고 Notion에도 그림으로 올라간다. 값은 cache/에 남아
+        # 있으니 규칙이 바뀌면 API 없이 되살릴 수 있다.
+        notes.append(f"{as_image} of {total} table(s) rendered as an image (merged "
+                     "cells) — merges and bold/underline/colour survive, but their "
+                     "cell text is not in the markdown")
     return result
 
 
