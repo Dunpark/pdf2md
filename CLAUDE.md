@@ -30,7 +30,7 @@ gh issue list --repo Dunpark/pdf2md --state all --limit 10
 | 3 | `.env`에 키 2개 | `2` |
 | 4 | PLAN 개정 버전 | `v3` |
 | 5 | 리모트 | `origin → Dunpark/pdf2md` |
-| 6 | 티켓 | `#1`~`#7`·`#13`·`#15`~`#19`가 존재하고 제목이 `TICKET-NNN` 형식 |
+| 6 | 티켓 | `#1`~`#7`·`#13`·`#15`~`#19`·`#25`·`#28`·`#30`·`#31`·`#34`·`#36`이 존재하고 제목이 `TICKET-NNN` 형식 |
 
 **어긋나면 → 작업을 진행하기 전에 이 문서를 먼저 고친다.**
 갱신하지 않은 채로 다음 작업에 들어가지 말 것 — 이 문서가 틀리면 다음 세션이 틀린다.
@@ -42,10 +42,10 @@ gh issue list --repo Dunpark/pdf2md --state all --limit 10
 실제로 실행해 확인한 명령만 적는다.
 
 ```bash
-python -m pdf2md "pdfs/Attention is all you need.pdf" --md     # → Gate A OK → output/{stem}.md + images/
+python -m pdf2md "pdfs/Attention is all you need.pdf" --md     # → Gate A 경고 7건 → output/{stem}.md + images/
                                                           #   캐시 히트 시 0.4s·네트워크 없음
 python -m pdf2md "pdfs/Attention is all you need.pdf" --notion <page-url>  # → 위 + Notion 페이지 append
-python -m pytest tests/ -q                        # → 105 passed
+python -m pytest tests/ -q                        # → 117 passed
 
 python -m pdf2md.strict                           # → self-check passed, exit 0
 python -m pdf2md.mineru_api                       # → self-check passed (MockTransport, 네트워크 안 탐)
@@ -94,7 +94,7 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 
 ## §4. 진행 경과
 
-**현재 단계: Phase 4 Notion 출력 경로 구현(#15~#19) — `--notion`으로 정제 md를 기존 Notion 페이지에 업로드(수식·표·이미지·인용 점프 링크). 실전 업로드의 사용자 육안 판정 대기. P4·P5는 여전히 사용자 결정 대기**
+**현재 단계: 일반화 검증 — 2편째 논문(#36)으로 Gate A·정제를 보강했다. 실전 Notion 업로드(#19·#31)의 육안 판정과 P4·P5 결정은 여전히 사용자 대기**
 
 | 시점 | 내용 |
 |---|---|
@@ -122,6 +122,7 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 | 〃 | #28 README(사용자 관점)·CLI 사용여정(usage·대화형 안내·단계 표시) 정비 |
 | 〃 | #30 `reference/` 삭제 — Phase 4 자체 구현 완성으로 되살릴 가능성 소멸. bare pytest 함정도 함께 소멸 |
 | 〃 | #31 md 입력 → 바로 Notion 업로드 추가 — `--md`로 뽑은 md를 편집한 뒤 재해석 없이 올리는 경로. 파싱·Gate A·정제 건너뜀. 실전 업로드 육안 판정 대기 |
+| 〃 | #36 2편째 논문 투입 → Gate A는 `OK`인데 출력 깨짐. 원인 3건 확정(md 생성 단계의 블록 유실·셀 중간 절단·절 번호 서식 편차). Gate A에 커버리지·절단·미지타입 검사 신설, R3를 끝점·부록 문자까지 확장 (PLAN Phase 2 "논문 간 편차") |
 
 ### v2 변경의 파급
 
@@ -158,6 +159,7 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 | 5 | #15 | Notion probe — 앵커·셀 수식·13열 표·`\tag` 실측 |
 | 6 | #16 · #17 · #18 | 블록 변환 · 업로드 · CLI 대상 선택. **계약 기점 커밋 공유 병렬** |
 | 7 | #19 | 인용 점프 링크 + PLAN v3 (**실전 업로드의 사용자 판정 필요**) |
+| — | #36 | 논문 간 편차 대응 — Gate A 커버리지·셀 절단·미지타입 검사, R3 번호 서식 확장 |
 
 **병렬 wave가 성립하는 조건은 두 가지뿐이다** — 모듈이 서로를 임포트하지 않고,
 서로 다른 파일을 소유한다. 공유 타입은 병렬 시작 전에 먼저 존재해야 한다: Wave 2는
@@ -170,8 +172,9 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
   그리고 md 직접 업로드(#31)의 실물 결과는 눈으로만 확인 가능하다 (§10).
 - 열린 결정 두 개 **사용자 판정 대기** (PLAN.md Phase 2의 P4·P5): 저작권 각주의
   처분과 부록 제목의 헤딩화. 결정되면 규칙을 `refine.py`에 추가한다.
-- 그 외에는 다른 논문을 투입해 Gate A·정제·Notion 변환이 일반화되는지 보는 것이
-  자연스러운 다음 단계다 — 새 문제가 나오면 그것이 새 티켓이 된다.
+- **논문을 더 투입한다.** 2편째(#36)에서 편차 3종이 나왔고 전부 규칙이 됐다.
+  3편째부터는 Gate A 경고 리포트가 먼저 무엇을 볼지 알려주므로 판정이 싸다 —
+  새 편차가 나오면 그것이 새 티켓이 된다.
 
 ---
 
@@ -289,8 +292,9 @@ Python  3.13.15
 ```bash
 python -m pdf2md.strict                          # strict.py 자체 점검 — passed, exit 0
 python -m pdf2md.mineru_api                      # API 클라이언트 자체 점검 (MockTransport) — passed
-python -m pytest tests/ -q                       # 루트 스위트 — 105 passed
-python -m pdf2md "pdfs/Attention is all you need.pdf" --md      # 끝까지 — Gate A OK → output/ 조립
+python -m pytest tests/ -q                       # 루트 스위트 — 117 passed
+python -m pdf2md "pdfs/Attention is all you need.pdf" --md      # 끝까지 — 경고 7건, halt 없이 output/ 조립
+python -m pdf2md "pdfs/Toward Autonomous Long-Horizon Engineering for ML Research.pdf" --md  # 2편째 — 경고 5건
 python -m pdf2md "pdfs/Attention is all you need.pdf" --notion <page-url>  # 위 + Notion append (실 API)
 ```
 
@@ -346,6 +350,16 @@ CI가 없다. 모든 검증은 로컬에서 수동으로 이뤄진다.
     클라이언트에서만 빨간 에러로 뜬다. 업로드 후 렌더 확인은 눈으로만 가능하다.
 13. **Notion API 404는 "없음"과 "통합에 공유 안 됨"을 구분하지 않는다** (함정 2와
     같은 원인). 에러 메시지가 `Automations` 통합 공유를 안내하게 해뒀다.
+14. **MinerU의 md는 `content_list.json`의 블록을 소리 없이 버린다.** `page_footnote`·
+    `footer`·`aside_text`·`header`가 JSON엔 멀쩡히 있는데 `full.md`엔 없다 — 두 논문
+    모두. 각주는 본문급 내용일 수 있다(Attention 논문의 각주 4는 `√d_k` 설명). 그래서
+    `gate_a(content_list, markdown)`가 존재한다. **md만 보고 판정하지 말 것.**
+15. **표가 비어 있지 않아도 깨져 있을 수 있다.** MinerU가 줄바꿈 하이픈을 셀 경계로
+    오인해 "Paper Comprehension"을 `<td>Paper sion</td><td>Comprehen-</td>`로 쪼갠
+    실측이 있다. 격자는 직사각형이고 값도 비지 않아 빈값 검사로는 원리적으로 못 잡는다.
+16. **절 번호 서식은 논문마다 다르다.** `3.1`·`3.1.`(끝점)·`A.1.`(부록 문자)가 전부
+    나온다. 헤딩 정규식을 좁게 쓰면 조용히 아무것도 안 하고 문서가 통째로 평탄화된다 —
+    실제로 #36에서 그렇게 됐다. 새 규칙은 두 캐시 논문 모두에 돌려보고 확정한다.
 
 ---
 

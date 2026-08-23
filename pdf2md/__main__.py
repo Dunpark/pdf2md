@@ -141,7 +141,9 @@ def main(
             print("parsing PDF (MinerU API; the first run takes minutes, "
                   "cached afterwards)...")
             result = parse_pdf(pdf_path)
-            violations = gate_a(result.content_list)
+            # md를 함께 넘겨야 커버리지 검사가 켜진다 — MinerU가 md 생성에서
+            # 버린 블록(각주·꼬리말)은 JSON과 대조해야만 보인다 (#36)
+            violations = gate_a(result.content_list, result.markdown)
             print(format_report(violations))
             if any(v.severity != "warning" for v in violations):
                 # 위반 = 내용 소실. output/을 쓰지 않고 멈춘다. 경고(이미지 폴백)는

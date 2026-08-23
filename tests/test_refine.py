@@ -117,3 +117,23 @@ def test_heading_depth_follows_section_numbering():
     assert "### 3.1 Encoder" in md
     assert "#### 3.2.1 Scaled Dot-Product Attention" in md
     assert "\n## Abstract" in md  # 번호 없는 헤딩은 그대로
+
+
+def test_heading_depth_handles_trailing_dot_and_appendix_letters():
+    # 논문마다 번호 서식이 다르다 (#36): "3.1." 처럼 끝에 점을 찍거나
+    # 부록을 "A.1." 처럼 문자로 매긴다. 둘 다 평탄화되면 안 된다.
+    src = ("## 1. Introduction\n\n## 3.1. Overview\n\n## 3.2.1. Detail\n\n"
+           "## A. Additional Related Work\n\n## A.1. Automating AI Research\n")
+    md, _ = refine(src)
+    assert "## 1. Introduction" in md and "### 1. Introduction" not in md
+    assert "### 3.1. Overview" in md
+    assert "#### 3.2.1. Detail" in md
+    assert "## A. Additional Related Work" in md and "### A. Additional" not in md
+    assert "### A.1. Automating AI Research" in md
+
+
+def test_unnumbered_heading_with_a_dot_is_left_alone():
+    # "Fig. 1" 같은 평문 헤딩을 번호로 오인하지 않는다
+    src = "## References\n\n## Acknowledgements\n"
+    md, _ = refine(src)
+    assert md == src

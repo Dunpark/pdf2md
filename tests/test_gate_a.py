@@ -117,3 +117,97 @@ def test_multiple_violations_all_reported():
         {"type": "equation", "page_idx": 0, "content": ""},
     ]
     assert [v.condition for v in gate_a(blocks)] == ["table lost", "image lost", "equation lost"]
+
+
+# ---------- 조건 6: md 커버리지 — content_list에는 있는데 md에 없는 텍스트 (#36) ----------
+
+def test_text_present_in_json_but_missing_from_markdown_is_warning():
+    # 실측: MinerU의 md 생성이 page_footnote·footer·aside_text를 통째로 버린다.
+    # 블록은 전부 비어 있지 않으므로 기존 빈값 검사로는 원리적으로 안 잡힌다.
+    blocks = [
+        {"type": "text", "page_idx": 0, "text": "본문은 살아남았다."},
+        {"type": "page_footnote", "page_idx": 0,
+         "text": "<sup>4</sup>To illustrate why the dot products get large, assume that"},
+    ]
+    (v,) = gate_a(blocks, "본문은 살아남았다.")
+    assert v.severity == "warning"
+    assert v.condition == "text dropped from markdown"
+    assert (v.page_idx, v.block_index) == (0, 1)
+    assert "dot products" in v.detail
+
+
+def test_coverage_ignores_formatting_differences():
+    # md는 이스케이프·줄바꿈·공백을 바꾼다 — 영숫자만 비교해 오탐을 만들지 않는다
+    blocks = [{"type": "page_footnote", "page_idx": 0,
+               "text": "<sup>∗</sup>Equal Contributions. Corresponding authors."}]
+    md = "text before\n\n<sup>\*</sup>Equal   Contributions.\nCorresponding authors.\n"
+    assert gate_a(blocks, md) == []
+
+
+def test_page_number_is_never_reported_as_dropped():
+    # 쪽번호는 md에서 빠지는 것이 정상이다 — 경고를 내면 리포트가 소음으로 덮인다
+    blocks = [{"type": "page_number", "page_idx": 0, "text": "7"}]
+    assert gate_a(blocks, "") == []
+    assert gate_a(blocks, "본문") == []
+
+
+def test_coverage_check_off_when_markdown_not_given():
+    # markdown 인자가 없으면 검사 자체를 하지 않는다 (기존 호출부 호환)
+    blocks = [{"type": "page_footnote", "page_idx": 0, "text": "사라진 각주 " * 10}]
+    assert gate_a(blocks) == []
+
+
+# ---------- 조건 7: 표 셀이 단어 중간에서 잘림 (#36) ----------
+
+def test_table_cell_split_mid_word_is_warning():
+    # 실측: "Paper Comprehension"이 <td>Paper sion</td><td>Comprehen-</td>로 쪼개졌다.
+    # 격자는 직사각형이고 값도 비어 있지 않아 기존 조건은 하나도 걸리지 않는다.
+    blocks = [{"type": "table", "page_idx": 4, "img_path": "images/t.jpg",
+               "table_body": "<table><tr><td>Paper sion</td><td>Comprehen-</td></tr></table>"}]
+    (v,) = [x for x in gate_a(blocks) if x.condition == "table cell split mid-word"]
+    assert v.severity == "warning"
+    assert v.condition == "table cell split mid-word"
+    assert (v.page_idx, v.block_index) == (4, 0)
+    assert "Comprehen-" in v.detail
+
+
+def test_table_cell_split_reported_once_per_table():
+    # 한 표에서 같은 절단이 10번 나와도 리포트는 표 하나에 한 줄이다
+    row = "<tr><td>a</td><td>Comprehen-</td></tr>"
+    blocks = [{"type": "table", "page_idx": 0, "img_path": "i.jpg",
+               "table_body": f"<table>{row * 5}</table>"}]
+    assert [v.condition for v in gate_a(blocks)] == ["table cell split mid-word"]
+
+
+def test_hyphen_in_normal_cells_is_not_a_split():
+    # 하이픈이 단어 사이나 숫자 부호로 쓰인 것은 절단이 아니다 — 오탐 금지
+    body = ("<table><tr><td>adaptive-pruning</td><td>-</td><td>-0.5</td>"
+            "<td>Gemini-3-Flash</td><td></td></tr></table>")
+    blocks = [{"type": "table", "page_idx": 0, "img_path": "i.jpg", "table_body": body}]
+    assert gate_a(blocks) == []
+
+
+# ---------- 조건 8: 미지의 블록 타입 (#36) ----------
+
+def test_unknown_block_type_is_warning():
+    # §11.8 함정 재발 방지 — 스키마가 늘면 조용히 통과시키지 않고 알린다
+    blocks = [{"type": "formula_caption", "page_idx": 0, "text": "..."}]
+    (v,) = gate_a(blocks)
+    assert v.severity == "warning"
+    assert v.condition == "unknown block type"
+    assert "formula_caption" in v.detail
+
+
+def test_unknown_block_type_reported_once_per_type():
+    blocks = [{"type": "widget", "page_idx": 0, "text": "x"} for _ in range(4)]
+    assert len(gate_a(blocks)) == 1
+
+
+def test_all_measured_types_are_known():
+    # 실측 2편(2026-08-22·23)에서 나온 타입 전부 — 하나라도 미지로 잡히면 안 된다
+    measured = ["text", "ref_text", "header", "footer", "page_number", "page_footnote",
+                "aside_text", "image", "chart", "equation", "table", "list", "code"]
+    blocks = [{"type": t, "page_idx": 0, "text": "x", "img_path": "i.jpg",
+               "content": "c", "table_body": "<table><tr><td>c</td></tr></table>"}
+              for t in measured]
+    assert [v for v in gate_a(blocks) if v.condition == "unknown block type"] == []
