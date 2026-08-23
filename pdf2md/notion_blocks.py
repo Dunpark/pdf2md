@@ -26,8 +26,17 @@ _ARRAY_LIMIT = 100  # rich_text 배열 한도 — 실측 최대 17, 넘으면 �
 
 _IMAGE_RE = re.compile(r"^!\[[^\]]*\]\(([^)]+)\)\s*$")
 _HEADING_RE = re.compile(r"^(#{1,6}) (.*)$")
-_REF_HEADING_RE = re.compile(r"^###### \[(\d+)\]\s*$")  # R2가 세운 참조 미니 헤딩
-_INLINE_MATH_RE = re.compile(r"\$[^$\n]*\$")  # refine.py와 동일한 정의
+# R2가 세운 참조 미니 헤딩. 번호형 `[18]`과 author-year형 `Starace et al. 2025`가
+# 둘 다 온다 — 어느 쪽이든 슬러그를 열쇠로 삼는다 (#44)
+# 형태는 R2가 만드는 두 가지로 좁힌다 — 본문에 진짜 h6가 오면 조용히
+# 문단으로 삼켜지면 안 된다
+_REF_HEADING_RE = re.compile(r"^###### (\[\d+\]|.+\s\d{4}[a-z]?)\s*$")
+_NUMBER_LABEL_RE = re.compile(r"^\[(\d+)\]$")
+_UNESCAPED_DOLLAR_RE = re.compile(r"(?<!\\)\$")
+_INLINE_MATH_RE = re.compile(r"(?<!\\)\$[^$\n]*\$")  # `\$`는 본문의 달러다 (#44)
+# 마크다운 이스케이프(`\*`·`\_`·`\$`)는 Notion에선 백슬래시째 보인다 — 실측:
+# 저자 줄 "Guoxin Chen\*". CommonMark의 이스케이프 가능 구두점 집합 (#44)
+_MD_ESCAPE_RE = re.compile(r"""\\([!"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~])""")
 _LINK_RE = re.compile(r"\[([^\][]*)\]\(([^)\s]+)\)")  # [[N](#N)]의 바깥 [는 label이 아니다
 _SUP_RE = re.compile(r"<sup>(.*?)</sup>")
 _SUP_DIGITS = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
@@ -83,14 +92,17 @@ def to_blocks(md: str, image_dir: Path) -> NotionDoc:
         m = _REF_HEADING_RE.match(line)
         if m:
             # R2의 미니 헤딩 + 다음 줄 항목 전문 → 문단 한 블록으로 병합.
-            # md의 h6 40개가 heading_3으로 뭉개지는 문제도 같이 사라진다 (플랜)
-            num = m.group(1)
+            # md의 h6 수십 개가 heading_3으로 뭉개지는 문제도 같이 사라진다 (플랜)
+            label = m.group(1)
             entry = ""
             if i + 1 < n and lines[i + 1].strip():
                 entry = lines[i + 1].rstrip()
                 i += 1
-            doc.ref_targets[num] = len(doc.blocks)
-            _append_text_block(doc, "paragraph", f"[{num}] {entry}".rstrip())
+            doc.ref_targets[_slug(label)] = len(doc.blocks)
+            # 번호형은 R2가 항목 텍스트에서 번호를 떼어 헤딩으로 옮겼으므로 되돌린다.
+            # author-year형은 항목이 저자명으로 시작해 그대로 온전하다 (#44)
+            prefix = f"{label} " if _NUMBER_LABEL_RE.match(label) else ""
+            _append_text_block(doc, "paragraph", f"{prefix}{entry}".rstrip())
             i += 1
             continue
 
@@ -132,6 +144,16 @@ def to_blocks(md: str, image_dir: Path) -> NotionDoc:
 
 
 # ---------- 블록 조립 ----------
+
+def _slug(heading: str) -> str:
+    """GitHub식 헤딩 슬러그. R2가 링크에 쓴 것과 같은 계산이어야 한다 (#44).
+
+    # ponytail: refine.py에 같은 함수가 있지만 이 모듈은 strict 외에는 아무것도
+    # 임포트하지 않는다 (PLAN.md "파일 구조"). 두 줄이라 사본이 더 싸다.
+    """
+    kept = "".join(c for c in heading.lower() if c.isalnum() or c in " -")
+    return "-".join(kept.split())
+
 
 def _append_text_block(doc: NotionDoc, btype: str, text: str) -> None:
     idx = len(doc.blocks)
@@ -206,9 +228,15 @@ def _rich_text(text: str, warnings: list[str]) -> tuple[list[dict], list[tuple[i
     """한 줄의 텍스트 → (rich_text 배열, [(배열 인덱스, 인용 번호)])."""
     if not text:
         return [], []
-    if text.count("$") % 2:
-        # 수식 경계를 추정하지 않는다 — 줄 전체를 평문으로
-        warnings.append(f"odd number of $ — line left as plain text: {text[:60]}")
+    # 이스케이프된 `\$`는 본문의 달러 기호지 수식 구분자가 아니다 — 실측:
+    # "costs approximately \$832" 한 줄이 통째로 평문으로 떨어졌다 (#44)
+    dollars = len(_UNESCAPED_DOLLAR_RE.findall(text))
+    if dollars % 2:
+        # 수식 경계를 추정하지 않는다 — 줄 전체를 평문으로.
+        # $가 하나뿐이면 짝지을 수식이 애초에 없다 (실측: 표의 금액 `$33.05`
+        # 7건) — 평문이 정답이므로 경고하지 않는다 (#44)
+        if dollars > 1:
+            warnings.append(f"odd number of $ — line left as plain text: {text[:60]}")
         return [{"type": "text", "text": {"content": c}} for c in _chunks(text)], []
 
     elements: list[dict] = []
@@ -241,10 +269,12 @@ def _emit_text(part: str, elements: list[dict], cites: list[tuple[int, str]],
     for m in _LINK_RE.finditer(part):
         _emit_plain(part[pos:m.start()], elements, warnings)
         label, url = m.group(1), m.group(2)
-        if url == f"#{label}" and label.isdigit():
-            # R2의 인용 마커 [N](#N) — 블록 id는 아직 없으므로 평문으로 넣고
-            # 위치만 기록한다. #19가 append 후 링크를 패치한다
-            cites.append((len(elements), label))
+        if url.startswith("#") and len(url) > 1:
+            # R2의 인용 마커 — 번호형 [N](#N)과 author-year형
+            # [Starace et al., 2025](#starace-et-al-2025)이 둘 다 온다 (#44).
+            # 블록 id는 아직 없으므로 평문으로 넣고 위치만 기록한다.
+            # #19가 append 후 링크를 패치하고, 앵커를 못 찾으면 거기서 경고한다
+            cites.append((len(elements), url[1:]))
             elements.append({"type": "text", "text": {"content": label}})
         elif url.startswith(("http://", "https://")):
             for chunk in _chunks(label):
@@ -269,7 +299,7 @@ def _emit_plain(s: str, elements: list[dict], warnings: list[str]) -> None:
             return inner.translate(_SUP_DIGITS)
         return inner  # ∗ † ‡ — 위첨자 자형이 없어 문자만 남긴다
 
-    s = _SUP_RE.sub(_sup, s)
+    s = _MD_ESCAPE_RE.sub(r"\1", _SUP_RE.sub(_sup, s))
     for chunk in _chunks(s):
         elements.append({"type": "text", "text": {"content": chunk}})
 

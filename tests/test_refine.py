@@ -352,10 +352,11 @@ T_PLAIN = ("<table><tr><td>Layer Type</td><td>Complexity</td></tr>"
            "<tr><td>Self-Attention</td><td> $O(n^{2})$ </td></tr></table>")
 
 
-def test_merged_table_becomes_its_render_image():
+def test_merged_table_gets_its_render_image_above_the_table():
     md, notes = refine(T_MERGED, table_images=["images/t1.jpg"])
-    assert md.strip() == "![](images/t1.jpg)"
-    assert "|" not in md and "<table" not in md
+    assert md.strip().splitlines()[0] == "![](images/t1.jpg)"
+    assert "<table" not in md  # HTML은 남지 않는다 (#38)
+    assert "| Task Name |" in md  # 표는 그대로 — 셀 텍스트를 잃지 않는다 (#44)
     assert [n for n in notes if "image" in n]
 
 
@@ -403,7 +404,7 @@ def test_wrong_image_order_falls_back_to_pipe_table():
 
 def test_matching_first_cell_passes_the_guard():
     md, _ = refine(T_MERGED, table_images=["images/t1.jpg"], table_bodies=[T_MERGED])
-    assert md.strip() == "![](images/t1.jpg)"
+    assert md.strip().splitlines()[0] == "![](images/t1.jpg)"
 
 
 def test_without_images_the_pipe_table_is_unchanged():
@@ -419,3 +420,29 @@ def test_fewer_images_than_tables_leaves_the_rest_as_pipe():
     md, _ = refine(T_MERGED + "\n\n" + T2_MERGED, table_images=["images/t1.jpg"])
     assert "images/t1.jpg" in md
     assert "| Agent |" in md  # 두 번째 표는 짝이 없어 파이프로
+
+
+def test_merged_table_emits_image_and_table(tmp_path=None):
+    # 이미지는 Notion·뷰어에서 폭에 맞춰 축소돼 24행짜리 표는 글자가 7px가 된다.
+    # 그림은 배치의 진실을, 표는 읽을 수 있는 값을 맡는다 (#44).
+    md, notes = refine(T_MERGED, table_images=["images/t1.jpg"])
+    lines = md.strip().splitlines()
+    assert lines[0] == "![](images/t1.jpg)"
+    assert lines[2] == "| Task Name | Gemini-3-Flash BasicAgent | Gemini-3-Flash IterAgent |"
+    assert "| bam | 48.46 | 45.04 |" in md
+
+
+def test_plain_table_gets_no_image(tmp_path=None):
+    md, _ = refine(T_PLAIN, table_images=["images/plain.jpg"])
+    assert "images/plain.jpg" not in md
+    assert "| Layer Type | Complexity |" in md
+
+
+def test_table_cell_math_and_citations_survive_the_image(tmp_path=None):
+    # #42에서 이미지로만 내면서 잃었던 것 — 셀 텍스트·수식·인용 링크가 돌아온다
+    html = ('<table><tr><td colspan="2">Model</td></tr>'
+            "<tr><td> $O(n^{2})$ </td><td>see [1]</td></tr></table>")
+    md, _ = refine(html + REFS, table_images=["images/t.jpg"])
+    assert "![](images/t.jpg)" in md
+    assert "$O(n^{2})$" in md
+    assert "[[1](#1)]" in md
