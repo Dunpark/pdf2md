@@ -335,13 +335,25 @@ python -m pdf2md "Attention is all you need.pdf"
 |---|---|
 | 통합 | `Automations` (워크스페이스 `Home`), 토큰은 `.env`의 `NOTION_API_KEY` |
 | API 버전 | `Notion-Version: 2026-03-11` 동작 확인 |
-| 대상 페이지 | `3c402360b04780f7bcd9fe1ee0c87948` — "Attention is all you need", 자식 블록 0건 |
+| 대상 페이지 | `3c402360b04780f7bcd9fe1ee0c87948` — "Attention is all you need", 자식 블록 1건 (2026-08-23 재측정) |
 | 쓰기 권한 | `PATCH /blocks/{id}/children` 성공, `DELETE /blocks/{id}` 성공 (검증 후 원상복구) |
 | 한도 | rich_text 2000자·배열 100개, equation 1000자, 요청 500KB·블록 1000개 |
 | 파일 업로드 | 단일 파트 **2단계** (`POST /v1/file_uploads` → `POST /…/send` multipart, 필드명 `file`). ≤20MB |
 | 이미지 블록 | `{"type":"image","image":{"type":"file_upload","file_upload":{"id":"…"}}}` |
 | 표 | `table_width`·`has_column_header`·`cells`. **colspan/rowspan API 미지원** |
 | `reference/` 상태 | 36 passed. `notion_parser.py` 595L 재사용 가능 |
+
+### TICKET-015 probe 실측 (2026-08-23, 실 API + 브라우저 육안)
+
+Notion 출력 경로 부활(#15~#19)이 의존하는 네 가지 미확인 사실을 검증용 페이지에서
+실측했다. 프로브 블록은 DELETE로 전량 원복 (자식 수 1 → 1 확인).
+
+| # | 질문 | 실측 답 |
+|---|---|---|
+| 1 | 페이지 내 블록 앵커 링크가 점프하는가 | **점프한다.** `https://www.notion.so/{page_id}#{block_id 대시 제거}` 를 rich_text `link.url`에 넣으면 클릭 시 대상 블록으로 이동 (사용자 브라우저 확인) |
+| 2 | 표 셀 안 equation rich_text가 살아남는가 | **살아남고 렌더된다.** `GET /blocks/{table_id}/children` 되읽기에서 expression **바이트 동일**, 브라우저에서 수식으로 렌더 (사용자 확인) |
+| 3 | 13열 표를 받아주는가 | **받아준다.** `table_width: 13` append 200, 되읽기 13열 그대로. 셀 안 링크도 생존 |
+| 4 | `\tag{1}` 이 렌더되는가 | **렌더된다.** 빨간 에러 없이 수식 우측에 (1) 표시 (사용자 확인) → #16은 `\tag`를 그대로 통과시킨다 |
 
 되살릴 때 필요한 작업: Gate B(2000자 분할·1000자 halt·미지원 마크업 sniffer·
 HTML→Notion 표 변환·이미지 블록), `notion_upload.py`, `URL→page_id`.
