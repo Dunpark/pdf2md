@@ -104,6 +104,11 @@ def upload(doc: NotionDoc, page_url: str, *, transport: httpx.BaseTransport | No
     batches = _split_batches(doc.blocks)
     try:
         with httpx.Client(timeout=60.0, transport=transport) as client:
+            # 0) 페이지 제목 — 빈 페이지에만 "[논문] {제목}"을 단다 (#25).
+            #    append보다 먼저: 반쪽 실패 페이지라도 제목이 있어야 식별·정리가 쉽다
+            if doc.title:
+                _set_page_title(client, headers, page_id, doc.title)
+
             # 1) 이미지 2단계 업로드 — id는 1시간 만료라 캐시하지 않는다
             for block_idx, img_path in doc.images:
                 fid = _upload_image(client, headers, Path(img_path))
@@ -143,6 +148,26 @@ def _warn(msg: str) -> None:
     # 계약으로 고정돼 경고를 반환할 자리가 없다. 채널이 더 필요해지면 그때 뚫는다.
     """
     print(f"notion: {msg}", file=sys.stderr)
+
+
+def _set_page_title(client: httpx.Client, headers: dict, page_id: str,
+                    title: str) -> None:
+    """빈 페이지의 제목을 "[논문] {제목}"으로 설정한다 (#25).
+
+    사용자가 이미 지정한 제목은 절대 덮지 않는다 — 메타데이터를 조용히 파괴하는
+    것은 이 프로젝트가 막으려는 실패의 다른 얼굴이다. 경고만 내고 지나간다.
+    """
+    data = _send(client, "GET", f"{BASE_URL}/pages/{page_id}", headers, "read page title")
+    existing = data.get("properties", {}).get("title", {}).get("title", [])
+    if existing:
+        current = "".join(e.get("text", {}).get("content", "") for e in existing)
+        _warn(f"page already has a title ({current!r}); leaving it untouched")
+        return
+    # ponytail: "[논문] " 접두는 사용자 워크스페이스의 표기 규약이라 하드코딩.
+    # 두 번째 규약이 나타나면 그때 인자로 뺀다
+    _send(client, "PATCH", f"{BASE_URL}/pages/{page_id}", headers, "set page title",
+          json={"properties": {"title": {"title": [
+              {"type": "text", "text": {"content": f"[논문] {title}"}}]}}})
 
 
 def _patch_citations(client: httpx.Client, headers: dict, doc: NotionDoc,
