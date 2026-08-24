@@ -373,3 +373,47 @@ def test_plain_h6_in_the_body_stays_a_heading(tmp_path):
     assert doc.blocks[0]["type"] == "heading_3"
     assert doc.blocks[1]["type"] == "paragraph"
     assert doc.ref_targets == {}
+
+
+# ---------- 코드 펜스 → Notion code 블록 (#46) ----------
+
+def test_code_fence_becomes_one_code_block(tmp_path):
+    md = ("intro\n\n```\nAlgorithm 1: Improvement\n"
+          "for t = 0 to T - 1 do\n    // step\n```\n\nafter\n")
+    doc = to_blocks(md, tmp_path)
+    assert [b["type"] for b in doc.blocks] == ["paragraph", "code", "paragraph"]
+    (content,) = _texts(doc.blocks[1])
+    assert content == "Algorithm 1: Improvement\nfor t = 0 to T - 1 do\n    // step"
+    assert doc.blocks[1]["code"]["language"] == "plain text"
+
+
+def test_code_fence_body_is_never_interpreted_as_markdown(tmp_path):
+    # 펜스 안의 `|`·`#`·`$`는 표도 헤딩도 수식도 아니다 — 글자 그대로다
+    doc = to_blocks("```\n| a | b |\n# not a heading\n$lone\n```\n", tmp_path)
+    (block,) = doc.blocks
+    assert block["type"] == "code"
+    assert _texts(block) == ["| a | b |\n# not a heading\n$lone"]
+
+
+def test_unclosed_code_fence_warns_and_keeps_the_text(tmp_path):
+    doc = to_blocks("```\nAlgorithm 1\nno closing fence\n", tmp_path)
+    assert "Algorithm 1" in "\n".join(_texts(doc.blocks[0]))
+    assert any("fence" in w for w in doc.warnings)
+
+
+# ---------- <sub> (#46) ----------
+
+def test_sub_translates_and_words_are_kept(tmp_path):
+    doc = to_blocks("signal S<sub>t</sub> and a <sub>mechanism</sub>", tmp_path)
+    (content,) = _texts(doc.blocks[0])
+    assert content == "signal Sₜ and a mechanism"
+
+
+# ---------- 헤딩 클램프 경고 집계 (#46) ----------
+
+def test_heading_clamp_is_one_aggregated_warning(tmp_path):
+    md = "\n\n".join(f"#### {n} Sub" for n in ("6.1.1", "6.1.2", "8.2.1"))
+    doc = to_blocks(md, tmp_path)
+    clamps = [w for w in doc.warnings if "clamp" in w]
+    assert len(clamps) == 1 and "3" in clamps[0]
+    assert all(b["type"] == "heading_3" for b in doc.blocks)
