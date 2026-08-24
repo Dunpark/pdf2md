@@ -389,3 +389,28 @@ def test_doc_without_title_makes_no_page_requests():
     nu.upload(titled_doc(title=""), PAGE_URL,
               transport=httpx.MockTransport(page_handler("", calls)))
     assert calls == {}  # h1이 없으면 /pages는 아예 건드리지 않는다
+
+
+# ---------- 전송 오류 재시도 (#46, CLAUDE.md §11.25) ----------
+
+def test_transport_error_retries_once(no_sleep):
+    # 실측 2회: 180블록+이미지를 올리는 1분 사이 한 번 끊기면 전량 실패였다.
+    # #46로 인용 패치가 늘어 업로드가 두 배로 길어졌으므로 더 자주 걸린다.
+    calls = {"n": 0}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise httpx.ConnectError("connection reset")
+        return append_ok(request)
+
+    nu.upload(make_doc([para("a")]), PAGE_URL, transport=httpx.MockTransport(handler))
+    assert calls["n"] == 2
+
+
+def test_transport_error_twice_still_fails():
+    def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("connection reset")
+
+    with pytest.raises(NotionApiError):
+        nu.upload(make_doc([para("a")]), PAGE_URL, transport=httpx.MockTransport(handler))
