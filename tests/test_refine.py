@@ -446,3 +446,118 @@ def test_table_cell_math_and_citations_survive_the_image(tmp_path=None):
     assert "![](images/t.jpg)" in md
     assert "$O(n^{2})$" in md
     assert "[[1](#1)]" in md
+
+
+# ---------- R2 author-year: 저자 서식 편차 (#46) ----------
+
+# 3편째 논문(서베이) 실측 서식. #40 논문은 앞머리 이니셜(`S. Schmidgall`)이었고
+# 이 논문은 이름을 통째로 쓴다(`Sahar Abdelnabi`) — 항목을 제1저자 전체 문구로
+# 색인하면 인용의 성만으로는 605건 중 4건만 맞았다.
+FULLNAME_REFS = (
+    "\n\n## References\n\n"
+    "Sahar Abdelnabi, Amr Gomaa, and Mario Fritz. LLM-deliberation. In ICLR, 2024.\n\n"
+    "Andres M. Bran, Sam Cox, and Philippe Schwaller. Augmenting llms. In Nature, 2024.\n\n"
+    "Michael Wooldridge and Nicholas R. Jennings. Intelligent agents. KER, 1995.\n\n"
+    "Rik van den Berg and Max Welling. Sylvester flows. In UAI, 2018.\n\n"
+    "Jürgen Schmidhuber. What is interesting?, 1997.\n\n"
+    "Jürgen Schmidhuber, Jieyu Zhao, and Marco Wiering. Shifting inductive bias, 1997.\n\n"
+    "OpenAI. Introducing upgrades to codex. https://openai.com/index/x, 2025.\n"
+)
+
+
+def test_full_given_names_are_indexed_by_surname():
+    md, _ = refine("as shown (Abdelnabi et al., 2024)." + FULLNAME_REFS)
+    assert "[Abdelnabi et al., 2024](#abdelnabi-et-al-2024)" in md
+    assert "###### Abdelnabi et al. 2024" in md
+
+
+def test_middle_initial_does_not_truncate_the_author():
+    # `Andres M. Bran` 의 `M.` 에서 잘리면 성이 `M` 이 되어 인용이 영원히 안 맞는다
+    md, _ = refine("tools (M. Bran et al., 2024)." + FULLNAME_REFS)
+    assert "[M. Bran et al., 2024](#m-bran-et-al-2024)" in md
+
+
+def test_ampersand_is_an_author_separator():
+    md, _ = refine("agents (Wooldridge & Jennings, 1995)." + FULLNAME_REFS)
+    assert "[Wooldridge & Jennings, 1995](#wooldridge-jennings-1995)" in md
+
+
+def test_multi_word_surname_matches_on_both_sides():
+    md, _ = refine("flows (van den Berg & Welling, 2018)." + FULLNAME_REFS)
+    assert "[van den Berg & Welling, 2018](#van-den-berg-welling-2018)" in md
+
+
+def test_single_author_citation_prefers_the_single_author_entry():
+    # 같은 성·같은 해 항목이 둘 — 하나는 단독 저자, 하나는 3인. 인용에 et al이
+    # 없으면 단독 저자 항목이고, 있으면 3인 항목이다.
+    md, _ = refine("(Schmidhuber, 1997) and (Schmidhuber et al., 1997)."
+                   + FULLNAME_REFS)
+    refs = md.split("## References")[1]
+    assert "###### Schmidhuber 1997\nJürgen Schmidhuber. What is interesting?" in refs
+    assert ("###### Schmidhuber et al. 1997\n"
+            "Jürgen Schmidhuber, Jieyu Zhao, and Marco Wiering.") in refs
+
+
+def test_ampersand_two_author_form_resolves_the_collision():
+    md, _ = refine("(Schmidgall & Moor, 2025) vs (Schmidgall et al., 2025)." + AY_REFS)
+    body, refs = md.split("## References")
+    assert "[Schmidgall & Moor, 2025](#schmidgall-moor-2025)" in body
+    assert "###### Schmidgall & Moor 2025\nS. Schmidgall and M. Moor." in refs
+    assert "###### Schmidgall et al. 2025\nS. Schmidgall, Y. Su," in refs
+
+
+# ---------- R4: <sub> 해제 (#46) ----------
+
+def test_subscript_letters_and_symbols_become_unicode():
+    md, notes = refine("signal S<sub>t</sub> and b<sub>t</sub>")
+    assert md == "signal Sₜ and bₜ", md
+    assert "<sub>" not in md
+
+
+def test_subscript_without_a_unicode_form_keeps_the_bare_text():
+    # MinerU가 표 캡션의 평범한 단어를 <sub>로 잘못 감싼 실측 — 아래첨자 자형이
+    # 없으므로 태그만 벗기고 글자는 그대로 둔다
+    md, _ = refine("a <sub>mechanism</sub> <sub>as</sub> <sub>primary</sub>")
+    assert md == "a mechanism as primary"
+
+
+def test_sub_and_sup_share_one_aggregated_note():
+    md, notes = refine("a<sup>1</sup>b<sub>t</sub>")
+    assert md == "a¹bₜ"
+    assert len(notes) == 1 and "2" in notes[0]
+
+
+def test_subscript_inside_math_is_untouched():
+    md, _ = refine("value $a<sub>t</sub>b$ and outside<sub>t</sub>\n")
+    assert "$a<sub>t</sub>b$" in md
+    assert "outsideₜ" in md
+
+
+# ---------- R6: MinerU code 블록의 HTML 껍데기 → 코드 펜스 (#46) ----------
+
+ALGO = (r'<div class="mineru-algorithm" style="white-space: pre-wrap; '
+        'font-family:monospace;">\n'
+        "Algorithm 1: Improvement\n"
+        r"for $t \leftarrow 0$ to $T - 1$ do" "\n"
+        "    // step\n"
+        "</div>\n")
+
+
+def test_mineru_algorithm_div_becomes_a_code_fence():
+    md, notes = refine(ALGO)
+    assert "<div" not in md and "</div>" not in md
+    lines = md.strip().splitlines()
+    assert lines[0] == "```" and lines[-1] == "```"
+    assert lines[1] == "Algorithm 1: Improvement"
+    assert lines[3] == "    // step"  # 들여쓰기가 뜻을 나르므로 그대로 남는다
+
+
+def test_code_fence_conversion_is_warned_once():
+    md, notes = refine(ALGO + "\n" + ALGO)
+    fence_notes = [n for n in notes if "code" in n]
+    assert len(fence_notes) == 1 and "2" in fence_notes[0]
+
+
+def test_code_fence_leaves_no_leftover_html_warning():
+    _, notes = refine(ALGO)
+    assert [n for n in notes if "HTML" in n] == []

@@ -1,4 +1,4 @@
-"""Phase 3 정제 — 실제로 깨진 것만 고친다 (PLAN.md Phase 3, 규칙 R1~R5).
+"""Phase 3 정제 — 실제로 깨진 것만 고친다 (PLAN.md Phase 3, 규칙 R1~R6).
 
 refine(markdown) -> (정제된 markdown, 경고 목록). 순수 문자열 변환이고
 프로젝트 안의 무엇도 임포트하지 않는다.
@@ -25,20 +25,32 @@ _SECTION_HEADING_RE = re.compile(r"^## ")
 # author-year 인용 (#40): `(Starace et al., 2025)`·`(A, 2025; B, 2026b)`
 _AY_CITE_RE = re.compile(r"\(([^()]{0,300}?\d{4}[a-z]?)\)")
 _AY_PART_RE = re.compile(r"^(.+?),\s*(\d{4}[a-z]?)$")
-_INITIALS_RE = re.compile(r"^(?:[A-Z]\.(?:-[A-Z]\.)?\s+)+")  # "G. ", "J. S. ", "W.-C. "
-_AUTHOR_STOP_RE = re.compile(r",|\.\s|\s+and\s+|\s+et al")
-_AND_OR_ETAL_RE = re.compile(r"\s+and\s+|\s+et al")
+# 항목의 저자 나열은 제목 앞에서 끝난다. 두 글자 이상 뒤의 마침표만 끝으로 본다 —
+# `M.`·`A.`는 이니셜이라 이름의 일부고 `Bran.`·`Wiering.`·`OpenAI.`는 나열의
+# 끝이다. 마침표 하나를 무조건 끝으로 보면 가운데 이니셜에서 잘린다 (#46).
+_AUTHORS_END_RE = re.compile(r"(?<=[^\W\d_]{2})\.\s")
+_AUTHOR_SPLIT_RE = re.compile(r",|\s+and\s+|\s*&\s*")  # `&`도 실재한다 (#46)
+_ETAL_RE = re.compile(r"\s+et al")
 _YEAR_RE = re.compile(r"\b(\d{4}[a-z]?)\b")
 # 논문마다 번호 서식이 다르다 (#36): "3.1"·"3.1."(끝점)·"A.1."(부록 문자).
 _NUMBERED_HEADING_RE = re.compile(r"^## ((?:\d+|[A-Z])(?:\.\d+)*\.?)( .*)$")
-_SUP_RE = re.compile(r"<sup>(.*?)</sup>")
-_SUP_DIGITS = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
+_SUP_SUB_RE = re.compile(r"<(sup|sub)>(.*?)</\1>")
+_SUP_MAP = str.maketrans("0123456789+-=()n", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿ")
+# 아래첨자 자형이 있는 글자는 이것뿐이다 — b·c·d·f 등에는 없다
+_SUB_MAP = str.maketrans("0123456789+-=()aehijklmnoprstuvx",
+                         "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ")
+_WORD_RUN_RE = re.compile(r"[^\W\d_]{2}")  # 글자 둘 = 낱말, 첨자가 아니다
 _HTML_TAG_RE = re.compile(r"</?([a-zA-Z][a-zA-Z0-9]*)(?:\s[^<>]*)?/?>")
+# MinerU의 `code` 블록은 code_body를 raw HTML div로 감싸 온다 (#46 실측:
+# `<div class="mineru-algorithm" style="white-space: pre-wrap; ...">`).
+_CODE_DIV_RE = re.compile(r"^<div\b[^>]*>\n(.*?)\n</div>[ \t]*$",
+                          re.DOTALL | re.MULTILINE)
 
 
 def refine(markdown: str, table_images: list[str] | None = None,
            table_bodies: list[str] | None = None) -> tuple[str, list[str]]:
-    """R1(표) → R2(참조 링크) → R3(헤딩 깊이) → R4(위첨자) → R5(잔존 HTML) 순.
+    """R1(표) → R6(code 펜스) → R2(참조 링크) → R3(헤딩 깊이) → R4(첨자) →
+    R5(잔존 HTML) 순.
 
     table_images는 content_list의 표 블록 순서대로인 `img_path` 목록이다 (#42).
     주면 표를 그 렌더 이미지로 바꾸고, 없으면 종전대로 파이프 테이블로 만든다
@@ -47,9 +59,10 @@ def refine(markdown: str, table_images: list[str] | None = None,
     """
     notes: list[str] = []
     md = _convert_tables(markdown, notes, table_images, table_bodies)
+    md = _fence_code_blocks(md, notes)
     md = _link_citations(md, notes)
     md = _fix_heading_depth(md)
-    md = _unwrap_superscripts(md, notes)
+    md = _unwrap_scripts(md, notes)
     _warn_leftover_html(md, notes)  # 마지막 — 모든 규칙이 끝난 상태를 본다
     return md, notes
 
@@ -306,19 +319,29 @@ def _link_numbered(lines: list[str], ref_start: int, ref_end: int,
 # 그대로 미니 헤딩으로 세워 슬러그를 유일하게 만든다 (`Starace et al. 2025` →
 # `#starace-et-al-2025`). 하나로 좁혀지지 않으면 평문으로 두고 센다 —
 # 엉뚱한 참조로 뛰는 링크는 뛰지 않는 링크보다 나쁘다.
+#
+# 열쇠는 **성**이다 (#46). 인용은 성만 쓰는데(`Abdelnabi et al., 2024`) 항목은
+# 논문마다 `S. Schmidgall`이거나 `Sahar Abdelnabi`다 — 제1저자 문구 전체로
+# 색인하면 이름을 통째로 쓴 논문에서 605건 중 4건만 맞았다.
 
-def _first_author(entry: str) -> str:
-    """앞머리 이니셜을 떼고 첫 구분자 앞까지 — 기관명도 같은 규칙으로 잡힌다."""
-    return _AUTHOR_STOP_RE.split(_INITIALS_RE.sub("", entry))[0].strip().rstrip(".")
+def _surnames(names: str) -> list[str]:
+    """저자 나열 문구 → 성 목록. 성은 각 이름의 마지막 낱말이다.
+
+    `van den Berg`처럼 여러 낱말인 성은 인용과 항목 양쪽에서 같은 규칙으로
+    줄어들므로 짝이 맞는다. `et al`은 이름이 아니라 신호이므로 버린다.
+    """
+    out: list[str] = []
+    for part in _AUTHOR_SPLIT_RE.split(_ETAL_RE.split(names)[0]):
+        tokens = part.strip().rstrip(".").split()
+        if tokens:
+            out.append(tokens[-1])
+    return out
 
 
-def _is_two_author(entry: str, second: str | None) -> bool:
-    """`Schmidgall and M. Moor.` 처럼 저자가 정확히 둘인가. second=None이면 이름 무시."""
-    rest = _INITIALS_RE.sub("", entry)
-    if second is None:
-        return bool(re.match(r"^[^,]+?\s+and\s+", rest))
-    return bool(re.match(rf"^{re.escape(_first_author(entry))}\s+and\s+"
-                         rf"(?:[A-Z]\.\s*)*{re.escape(second)}[.,]", rest))
+def _entry_surnames(entry: str) -> list[str]:
+    """References 항목의 저자 성 목록 — 제목 앞까지만 본다."""
+    m = _AUTHORS_END_RE.search(entry)
+    return _surnames(entry[:m.start()] if m else entry)
 
 
 def _slug(heading: str) -> str:
@@ -330,12 +353,16 @@ def _slug(heading: str) -> str:
 def _link_author_year(lines: list[str], ref_start: int, ref_end: int,
                       notes: list[str]) -> str:
     index: dict[tuple[str, str], list[int]] = {}
+    authors: dict[int, list[str]] = {}
     for i in range(ref_start + 1, ref_end):
         if not lines[i].strip():
             continue
-        who = _first_author(lines[i])
+        who = _entry_surnames(lines[i])
+        if not who:
+            continue
+        authors[i] = who
         for year in set(_YEAR_RE.findall(lines[i])):
-            index.setdefault((who, year), []).append(i)
+            index.setdefault((who[0], year), []).append(i)
     if not index:
         return "\n".join(lines)
 
@@ -343,14 +370,20 @@ def _link_author_year(lines: list[str], ref_start: int, ref_end: int,
     linked = unresolved = 0
 
     def _resolve(phrase: str, year: str) -> int | None:
-        who = _AND_OR_ETAL_RE.split(phrase)[0].strip().rstrip(".")
-        cands = index.get((who, year), [])
-        if len(cands) > 1:  # 같은 성·같은 해 — 인용의 저자 수 신호로 가른다
-            pair = re.search(r"\s+and\s+(\S+)$", phrase)
-            if pair:
-                cands = [i for i in cands if _is_two_author(lines[i], pair.group(1))]
-            elif "et al" in phrase:
-                cands = [i for i in cands if not _is_two_author(lines[i], None)]
+        cited = _surnames(phrase)
+        if not cited:
+            return None
+        cands = index.get((cited[0], year), [])
+        if len(cands) > 1:
+            # 같은 성·같은 해 — 인용이 알려주는 저자 수로 가른다. 관례상
+            # `et al`은 3인 이상, `X & Y`/`X and Y`는 정확히 둘, 홀로 선 성은
+            # 단독 저자다. 과하게 걸러 0개가 되면 링크하지 않을 뿐이다.
+            if _ETAL_RE.search(phrase):
+                cands = [i for i in cands if len(authors[i]) >= 3]
+            elif len(cited) == 2:
+                cands = [i for i in cands if authors[i] == cited]
+            else:
+                cands = [i for i in cands if len(authors[i]) == 1]
         return cands[0] if len(cands) == 1 else None
 
     def _one(part: str, record: bool) -> str:
@@ -404,27 +437,66 @@ def _fix_heading_depth(md: str) -> str:
     )
 
 
-# ---------- R4: <sup> 해제 ----------
+# ---------- R4: <sup>·<sub> 해제 ----------
 #
-# 마크다운에는 위첨자 문법이 없고, 뷰어는 HTML이 한 줄이라도 있으면 파일 전체를
-# 코드 모드로 강제한다 (CLAUDE.md §11.9). 그래서 태그를 벗긴다.
+# 마크다운에는 위/아래첨자 문법이 없고, 뷰어는 HTML이 한 줄이라도 있으면 파일
+# 전체를 코드 모드로 강제한다 (CLAUDE.md §11.9). 그래서 태그를 벗긴다.
 # notion_blocks가 md 직접 입력(#31)을 위해 같은 변환을 따로 갖고 있다 — 그쪽은
 # refine을 거치지 않은 손편집 md도 받으므로 사본이 제 몫을 한다.
 
-def _unwrap_superscripts(md: str, notes: list[str]) -> str:
-    """<sup>4</sup> → ⁴. 유니코드 위첨자 자형이 없는 ∗ † ‡ 는 문자만 남는다."""
+def _unwrap_scripts(md: str, notes: list[str]) -> str:
+    """<sup>4</sup> → ⁴, <sub>t</sub> → ₜ. 자형이 없으면 글자만 남긴다.
+
+    전부-아니면-전무다: 한 글자라도 첨자 자형이 없으면 평문으로 둔다. 절반만
+    바꾸면(`1,2` → `¹,²`) 남은 글자가 본문 크기로 섞여 더 읽기 어렵다.
+    글자가 둘 이상 잇달으면 낱말이지 첨자가 아니다 — 실측 `<sub>mechanism</sub>`
+    `<sub>as</sub>`는 MinerU가 표 캡션의 평범한 단어를 잘못 감싼 것이라 평문이
+    정답이다 (#46).
+    """
     count = 0
 
-    def _sup(m: re.Match) -> str:
+    def _one(m: re.Match) -> str:
         nonlocal count
         count += 1
-        return m.group(1).translate(_SUP_DIGITS)
+        inner = m.group(2)
+        if _WORD_RUN_RE.search(inner):
+            return inner  # 낱말 — 첨자로 만들면 뜻 없는 작은 글자가 된다
+        table = _SUP_MAP if m.group(1) == "sup" else _SUB_MAP
+        return inner.translate(table) if inner and all(
+            ord(c) in table for c in inner) else inner
 
-    out = _sub_outside_math(md, lambda part: _SUP_RE.sub(_sup, part))
+    out = _sub_outside_math(md, lambda part: _SUP_SUB_RE.sub(_one, part))
     if count:
-        # 태그마다 한 줄이면 실측 11줄 — 리포트가 소음에 덮인다. 실행당 한 줄.
-        notes.append(f"unwrapped {count} <sup> tag(s) to unicode superscript "
-                     "(markdown has no superscript markup)")
+        # 태그마다 한 줄이면 실측 31줄 — 리포트가 소음에 덮인다. 실행당 한 줄.
+        notes.append(f"unwrapped {count} <sup>/<sub> tag(s) to unicode "
+                     "superscript/subscript (markdown has no such markup)")
+    return out
+
+
+# ---------- R6: MinerU code 블록의 HTML 껍데기 → 코드 펜스 ----------
+#
+# MinerU는 `code`(sub_type: algorithm) 블록의 본문을 raw `<div>`로 감싸 보낸다
+# (#46 실측 2개). 그 div 하나로 파일 전체가 코드 모드가 되고(§11.9), Notion에는
+# `<div ...>` 가 평문 문단으로 올라가며 21줄 알고리즘이 줄마다 한 문단으로
+# 쪼개진다. 펜스는 들여쓰기를 바이트 그대로 남기는 유일한 마크다운 구문이다.
+
+def _fence_code_blocks(md: str, notes: list[str]) -> str:
+    """`<div ...>` … `</div>` 한 덩어리 → ``` 펜스. 본문은 손대지 않는다."""
+    count = 0
+
+    def _fence(m: re.Match) -> str:
+        nonlocal count
+        count += 1
+        return f"```\n{m.group(1)}\n```"
+
+    out = _CODE_DIV_RE.sub(_fence, md)
+    if count:
+        # 펜스 안의 LaTeX는 렌더되지 않고 소스로 보인다 — 잃는 것을 말해 둔다.
+        # ponytail: 이후 규칙(R2·R4·R5)은 펜스 안도 훑는다. 실측 두 알고리즘
+        # 블록에는 인용도 첨자 태그도 없어 아직 문제가 아니다. 생기면 그때
+        # _sub_outside_math에 펜스 인식을 더한다.
+        notes.append(f"{count} MinerU code block(s) became fenced code blocks — "
+                     "LaTeX inside a fence shows as source, not rendered math")
     return out
 
 
