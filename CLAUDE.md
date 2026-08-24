@@ -30,7 +30,7 @@ gh issue list --repo Dunpark/pdf2md --state all --limit 10
 | 3 | `.env`에 키 2개 | `2` |
 | 4 | PLAN 개정 버전 | `v3` |
 | 5 | 리모트 | `origin → Dunpark/pdf2md` |
-| 6 | 티켓 | `#1`~`#7`·`#13`·`#15`~`#19`·`#25`·`#28`·`#30`·`#31`·`#34`·`#36`·`#38`·`#40`·`#42`·`#44`가 존재하고 제목이 `TICKET-NNN` 형식 |
+| 6 | 티켓 | `#1`~`#7`·`#13`·`#15`~`#19`·`#25`·`#28`·`#30`·`#31`·`#34`·`#36`·`#38`·`#40`·`#42`·`#44`·`#46`가 존재하고 제목이 `TICKET-NNN` 형식 |
 
 **어긋나면 → 작업을 진행하기 전에 이 문서를 먼저 고친다.**
 갱신하지 않은 채로 다음 작업에 들어가지 말 것 — 이 문서가 틀리면 다음 세션이 틀린다.
@@ -45,7 +45,7 @@ gh issue list --repo Dunpark/pdf2md --state all --limit 10
 python -m pdf2md "pdfs/Attention is all you need.pdf" --md     # → Gate A 경고 7건 → output/{stem}.md + images/
                                                           #   캐시 히트 시 0.4s·네트워크 없음
 python -m pdf2md "pdfs/Attention is all you need.pdf" --notion <page-url>  # → 위 + Notion 페이지 append
-python -m pytest tests/ -q                        # → 164 passed
+python -m pytest tests/ -q                        # → 186 passed
 
 python -m pdf2md.strict                           # → self-check passed, exit 0
 python -m pdf2md.mineru_api                       # → self-check passed (MockTransport, 네트워크 안 탐)
@@ -94,7 +94,7 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 
 ## §4. 진행 경과
 
-**현재 단계: md 출력은 사용자 육안 검증을 통과했다 — 인용 점프 동작 확인(#40), 표는 병합 여부로 이미지/텍스트를 가른다(#42). 남은 것은 실전 Notion 업로드(#19·#31)의 육안 판정과 P4·P5 결정으로, 둘 다 사용자 대기**
+**현재 단계: 3편째 논문(서베이)의 결손 네 건을 고쳤다(#46) — 인용 링크가 4/605에서 598/605가 됐고, `<sub>`·MinerU `code` 블록의 raw HTML이 사라졌다. 실물 재실행으로 확인. 남은 것은 실전 Notion 업로드(#19·#31·#46)의 육안 판정과 P4·P5 결정으로, 둘 다 사용자 대기**
 
 | 시점 | 내용 |
 |---|---|
@@ -128,6 +128,7 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 | 〃 | #42 **병합이 있는 표만** MinerU 렌더 이미지로 출력 — 마크다운에 병합 문법이 없고 토글도 없다(`<details>`는 HTML→코드 모드). 그 이미지에 병합·볼드·밑줄·빨간색이 전부 살아 있고 이미 `output/images/`에 있었는데 참조된 적이 없었다. 병합 없는 표는 파이프 테이블로 남긴다 — 셀 텍스트·수식·인용 링크를 잃을 이유가 없다. 판정은 `rowspan`/`colspan` 실값(실측 7개 중 5개 병합) |
 | 〃 | #44 첫 실전 Notion 업로드가 결손 4건을 드러냄 — 인용 84개가 링크째 버려짐(author-year 마커를 `notion_blocks`가 모름)·참조 43개가 heading_3으로 뭉개짐·마크다운 이스케이프가 백슬래시째 보임(`Chen\*`)·표 이미지가 본문 폭에 눌려 행 높이 14px로 판독 불가. 미니 헤딩을 슬러그로 통일하고, 이스케이프를 풀고, **병합 표는 이미지+표를 나란히** 낸다. 재업로드 실측: 인용 84/84 링크, `table` 블록 3, 경고 0 |
 | 〃 | **사용자 육안 검증: 인용 클릭 이동 동작 확인** — 번호형·author-year형 둘 다. P2 종결. 남은 육안 판정은 Notion 실전 업로드(#19·#31)뿐 |
+| 2026-08-24 | #46 3편째 논문(서베이 1048블록·참조 528항) 투입 → Gate A는 `0 violation`인데 결손 4건. **인용 605건 중 4건만 링크**(항목이 이름을 통째로 쓰고, 가운데 이니셜에서 성이 잘리고, `&` 구분자를 몰랐다) → R2를 성 기준으로 재작성해 **598건 링크**. `<sub>` 31개와 MinerU `code` 블록의 raw `<div>` 2개가 파일을 코드 모드로 잠그고 있었다 → R4를 `<sub>`까지, R6(펜스) 신설. Gate A 커버리지가 `code_body`를 보게 하고, `####` 클램프 경고 16줄을 한 줄로, 업로더에 전송 오류 재시도 1회 |
 
 ### v2 변경의 파급
 
@@ -169,6 +170,7 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 | — | #40 | author-year 인용 링크 · 병합 셀 표현 · 서식 소실 경고 |
 | — | #42 | 병합된 표만 렌더 이미지로 출력, 나머지는 파이프 테이블 |
 | — | #44 | Notion 출력 결손 — 인용 앵커·참조 헤딩·이스케이프·표 판독성 |
+| — | #46 | 서베이 논문 — 성 기준 인용 링크 · `<sub>` · MinerU `code` 블록 펜스화 · 리포트 소음 · 전송 오류 재시도 |
 
 **병렬 wave가 성립하는 조건은 두 가지뿐이다** — 모듈이 서로를 임포트하지 않고,
 서로 다른 파일을 소유한다. 공유 타입은 병렬 시작 전에 먼저 존재해야 한다: Wave 2는
@@ -177,15 +179,19 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 
 ### 다음 할 일
 
-- **#19·#31 실전 Notion 업로드의 육안 판정 대기** — 수식 렌더·표 이미지·인용 점프,
-  그리고 md 직접 업로드(#31)의 실물 결과는 눈으로만 확인 가능하다 (§10).
+- **#19·#31·#46 실전 Notion 업로드의 육안 판정 대기** — 수식 렌더·표 이미지·인용 점프·
+  코드 펜스(#46), 그리고 md 직접 업로드(#31)의 실물 결과는 눈으로만 확인 가능하다 (§10).
   **md 출력 쪽 점프는 확인됐다** (2026-08-23) — Notion 쪽은 앵커 메커니즘이
   달라(블록 id 패치, §11.11) 따로 봐야 한다.
 - 열린 결정 두 개 **사용자 판정 대기** (PLAN.md Phase 2의 P4·P5): 저작권 각주의
   처분과 부록 제목의 헤딩화. 결정되면 규칙을 `refine.py`에 추가한다.
-- **논문을 더 투입한다.** 2편째(#36)에서 편차 3종이 나왔고 전부 규칙이 됐다.
-  3편째부터는 Gate A 경고 리포트가 먼저 무엇을 볼지 알려주므로 판정이 싸다 —
-  새 편차가 나오면 그것이 새 티켓이 된다.
+- **논문을 더 투입한다.** 2편째(#36)에서 편차 3종, 3편째(#46)에서 7종이 나왔고
+  전부 규칙이 됐다. **Gate A가 `0 violation`이어도 결손은 나간다** — #46의 네 건은
+  전부 `refine:` 리포트 줄에만 흔적이 있었다. 새 논문을 넣으면 Gate A 리포트뿐
+  아니라 `refine:` 줄의 숫자(인용 링크 몇 건, 남은 HTML 무엇)를 먼저 읽는다.
+- **#46이 규칙으로 못 고친 것** — 서베이 논문 인용 7건: 항목 제목의 연도 범위
+  (`1990–2010`)가 연도로 잡혀 생기는 모호 4건, 참조 목록에 없는 인용 1건,
+  PDF 추출이 낱말을 쪼갠 `(Suz gun et al., 2025)` 2건. 전부 평문으로 남고 세어진다.
 
 ---
 
@@ -198,7 +204,7 @@ gh auth status                                    # → Dunpark, scopes: repo/wo
 |---|---|
 | (루트) | 설계 문서와 규약 |
 | `pdfs/` | 입력 PDF 모음(#34). 시료 논문 하나만 git 추적, 나머지는 `.gitignore`로 무시 — 사용자가 자유롭게 넣고 뺀다 |
-| `pdf2md/` | 소스: `__main__`(CLI·조립·출력 대상 선택) · `strict`(공유 타입) · `mineru_api`(네트워크만) · `cache`(디스크만) · `gate_a`(손실 감지) · `refine`(Phase 3 정제, output에만 적용 — 캐시는 원본 유지) · `notion_blocks`(Phase 4, 정제 md→NotionDoc, 순수·한도 검사 전부) · `notion_upload`(Phase 4, HTTP만) |
+| `pdf2md/` | 소스: `__main__`(CLI·조립·출력 대상 선택) · `strict`(공유 타입) · `mineru_api`(네트워크만) · `cache`(디스크만) · `gate_a`(손실 감지) · `refine`(Phase 3 정제 R1~R6, output에만 적용 — 캐시는 원본 유지) · `notion_blocks`(Phase 4, 정제 md→NotionDoc, 순수·한도 검사 전부) · `notion_upload`(Phase 4, HTTP만) |
 | `tests/` | 루트 pytest 스위트 (`test_cache` · `test_gate_a` · `test_cli` · `test_refine` · `test_notion_blocks` · `test_notion_upload`) |
 | `cache/` | MinerU 응답 캐시 `{sha256(pdf)}/`. git 추적 금지. 지워도 안전하지만 지우면 API 할당량을 다시 태운다 |
 | `output/` | 최종 산출물 `{stem}.md` + `images/`. git 추적 금지. 언제든 재생성 가능 |
@@ -303,9 +309,10 @@ Python  3.13.15
 ```bash
 python -m pdf2md.strict                          # strict.py 자체 점검 — passed, exit 0
 python -m pdf2md.mineru_api                      # API 클라이언트 자체 점검 (MockTransport) — passed
-python -m pytest tests/ -q                       # 루트 스위트 — 164 passed
+python -m pytest tests/ -q                       # 루트 스위트 — 186 passed
 python -m pdf2md "pdfs/Attention is all you need.pdf" --md      # 끝까지 — 경고 7건, halt 없이 output/ 조립
 python -m pdf2md "pdfs/Toward Autonomous Long-Horizon Engineering for ML Research.pdf" --md  # 2편째 — 경고 7건
+python -m pdf2md "pdfs/Self-ImprovementsinModernAgenticSystemsASurvey.pdf" --md  # 3편째 — 경고 4건, 인용 598/605 링크
 python -m pdf2md "pdfs/Attention is all you need.pdf" --notion <page-url>  # 위 + Notion append (실 API)
 ```
 
@@ -353,7 +360,9 @@ CI가 없다. 모든 검증은 로컬에서 수동으로 이뤄진다.
    (2026-08-23)** — 여러 단어·마침표가 든 슬러그도 동작한다. 그리고 **파일을 코드
    모드로 강제하는 원인이 둘이다** — 각주 문법(`[^N]:`)이 한 줄이라도 있을 때, 그리고
    **HTML 태그가 하나라도 있을 때**("Editable only in code mode because this file
-   contains HTML, JSX, or MDX" — #38에서 `<sup>` 하나로 확인). 코드 모드가 되면
+   contains HTML, JSX, or MDX" — #38에서 `<sup>` 하나로 확인. #46에서 `<sub>` 31개와
+   MinerU `code` 블록의 `<div>` 2개로 재발했다 — 태그를 하나씩 잡는 대신 R5의 일반
+   경고를 보라). 코드 모드가 되면
    문서로 편집할 수 없다. md 출력 규칙을 바꿀 때 이 전제 위에서 판단한다
    (PLAN.md Phase 3 R2·R4·R5).
 10. **Notion의 마크다운 직접 입력은 append를 지원하지 않는다.** `markdown` 입력은
@@ -378,6 +387,12 @@ CI가 없다. 모든 검증은 로컬에서 수동으로 이뤄진다.
     논문이 있다** — 본문 범위를 "References 앞"으로 잡으면 부록 인용을 통째로
     놓친다(실측 84개 중 49개). 같은 성·같은 해 항목이 둘인 경우도 실재하므로
     (`Schmidgall 2025`) 좁혀지지 않으면 링크하지 않는다 (#40).
+    **저자 이름 서식도 논문마다 다르다** — 2편째는 앞머리 이니셜(`S. Schmidgall`),
+    3편째는 이름 전체(`Sahar Abdelnabi`)다. 인용은 **성만** 쓰므로 색인 열쇠는 성이어야
+    한다. 제1저자 문구 전체로 색인했더니 605건 중 4건만 맞았다. 저자 구분자는
+    `,`·`and`·`&` 셋이고, 나열의 끝은 **두 글자 뒤의 마침표**다 — 마침표 하나를
+    무조건 끝으로 보면 `Andres M. Bran`이 `Andres M`이 되고 기관명 `OpenAI.`는
+    제목까지 삼킨다 (#46).
 17. **마크다운에는 셀 병합도 토글도 없다.** 병합은 문법 자체가 없고, 접기는
     `<details>`뿐인데 그것도 HTML이라 §11.9로 잠긴다. 대신 **MinerU가 표마다 원본
     렌더 이미지를 준다** — 병합·볼드·밑줄·색이 전부 살아 있고 `img_path`로 온다.
@@ -412,10 +427,20 @@ CI가 없다. 모든 검증은 로컬에서 수동으로 이뤄진다.
     평문으로 들어가 "Guoxin Chen\*", "\$832"로 렌더된다. rich_text로 넣기 전에
     푼다 (#44). 반대로 `$`가 하나뿐이면 짝지을 수식이 없으니(표의 금액 `$33.05`)
     평문이 정답이고 경고할 일이 아니다.
-25. **업로더는 연결 끊김을 재시도하지 않는다.** 429는 재시도하지만 전송 오류는
-    그대로 죽는다 — 180블록+이미지 14개를 올리는 1분 사이 한 번만 끊겨도 전량
-    실패다(실측 2회). 실패해도 md는 이미 쓰여 있고 부분 업로드도 남지 않으니
-    다시 돌리면 되지만, 불안정한 회선에서는 이것부터 고쳐야 한다.
+25. **업로드는 길고, 끊기면 그 요청만 한 번 다시 쏜다.** 429/5xx와 전송 오류가
+    각각 1회 재시도다 (#46). 두 번 연속 끊기면 여전히 전량 실패지만, md는 이미
+    쓰여 있고 부분 업로드도 남지 않으니 다시 돌리면 된다. 인용 패치가 블록당
+    1회라 인용이 많은 논문은 append보다 패치가 더 오래 걸린다 — 서베이 논문 실측:
+    986블록 append + 흩어진 문단에 인용 579건 PATCH.
+26. **MinerU의 새 블록 타입은 raw HTML을 담아 온다.** `code`(`sub_type: algorithm`)의
+    `code_body`는 `<div class="mineru-algorithm" style="white-space: pre-wrap; ...">`로
+    시작한다. 그리고 **본문이 담긴 키가 타입마다 다르다** — `code`에는 `text` 키가
+    아예 없어서 Gate A 커버리지 검사가 `text`만 보면 알고리즘이 md에서 통째로
+    빠져도 조용하다(`gate_a._BODY_KEYS`). 새 타입은 **어느 키에 본문이 들었는지
+    실물 JSON에서 먼저 확인한다** (#46).
+27. **MinerU는 평범한 낱말을 `<sub>`로 감싼다.** 표 캡션의 `mechanism`·`as`·`primary`가
+    그랬다. 첨자 태그를 유니코드 첨자로 바꿀 때 글자마다 자형이 있는지만 보면
+    `as` → `ₐₛ`가 된다 — **글자가 둘 이상 잇달으면 낱말이지 첨자가 아니다** (#46).
 
 ---
 
