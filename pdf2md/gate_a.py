@@ -28,6 +28,9 @@ _KNOWN_TYPES = frozenset({
     "aside_text", "image", "chart", "equation", "table", "list", "code",
 })
 
+# 커버리지 검사가 볼 본문 키가 `text`가 아닌 타입 (#46).
+_BODY_KEYS = {"code": "code_body"}
+
 # md 생성이 버리는 것이 정상인 타입 — 커버리지 검사에서 뺀다. 쪽번호까지
 # 경고하면 리포트가 소음에 덮여 진짜 손실을 못 보게 된다.
 _FURNITURE_TYPES = frozenset({"page_number"})
@@ -156,9 +159,12 @@ def gate_a(content_list: list[dict], markdown: str = "") -> list[Violation]:
 
         # 조건 6: JSON에는 있는데 md에는 없는 텍스트 (#36)
         if md_alnum and btype not in _FURNITURE_TYPES:
-            probe = _alnum(str(block.get("text") or ""))[:_PROBE_LEN]
+            # 타입마다 본문을 담는 키가 다르다 — `code` 블록에는 `text`가 아예
+            # 없어서 `text`만 보면 알고리즘이 통째로 빠져도 조용하다 (#46)
+            body = str(block.get(_BODY_KEYS.get(str(btype), "text")) or "")
+            probe = _alnum(body)[:_PROBE_LEN]
             if probe and probe not in md_alnum:
-                text = " ".join(str(block["text"]).split())
+                text = " ".join(body.split())
                 violations.append(Violation(
                     "text dropped from markdown", page_idx=page, block_index=i,
                     severity="warning",

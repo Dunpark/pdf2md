@@ -232,3 +232,22 @@ def test_no_styling_words_no_warning():
     blocks = [{"type": "text", "page_idx": 0,
                "text": "plain prose with a bolder claim and no formatting talk."}]
     assert [x for x in gate_a(blocks) if x.condition == "styling not preserved"] == []
+
+
+# ---------- 조건 6: code 블록은 code_body에 본문을 담는다 (#46) ----------
+
+def test_dropped_code_block_is_reported():
+    # 실측: MinerU의 `code`(sub_type: algorithm) 블록은 `text` 키가 없다.
+    # `text`만 보면 알고리즘이 통째로 md에서 빠져도 아무도 모른다.
+    body = "Algorithm 1: Foundation-Model Improvement, the generic update loop"
+    blocks = [{"type": "code", "sub_type": "algorithm", "page_idx": 0,
+               "code_body": body}]
+    (v,) = gate_a(blocks, "전혀 다른 마크다운")
+    assert v.condition == "text dropped from markdown" and v.severity == "warning"
+    assert "Algorithm 1" in v.detail
+
+
+def test_present_code_block_is_not_reported():
+    body = "Algorithm 1: Foundation-Model Improvement, the generic update loop"
+    assert gate_a([{"type": "code", "page_idx": 0, "code_body": body}],
+                  f"```\n{body}\n```") == []

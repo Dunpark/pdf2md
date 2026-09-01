@@ -9,7 +9,7 @@ Notion이 강제하는 모든 한도를 여기서 검사한다. 그래야 업로
 LaTeX는 절대 정규화하지 않는다: $와 $ 사이를 바이트 그대로 복사한다.
 틀린 수식은 없는 수식보다 나쁘다.
 
-# ponytail: 입력 계약은 refine.py R1~R3의 출력이다 — R2의 ###### [N] 미니 헤딩과
+# ponytail: 입력 계약은 refine.py R1~R6의 출력이다 — R2의 ###### [N] 미니 헤딩과
 # [[N](#N)] 인용 마커를 그대로 파싱한다. R2가 바뀌면 이 모듈도 바뀐다.
 """
 
@@ -38,8 +38,14 @@ _INLINE_MATH_RE = re.compile(r"(?<!\\)\$[^$\n]*\$")  # `\$`는 본문의 달러�
 # 저자 줄 "Guoxin Chen\*". CommonMark의 이스케이프 가능 구두점 집합 (#44)
 _MD_ESCAPE_RE = re.compile(r"""\\([!"#$%&'()*+,\-./:;<=>?@\[\\\]^_`{|}~])""")
 _LINK_RE = re.compile(r"\[([^\][]*)\]\(([^)\s]+)\)")  # [[N](#N)]의 바깥 [는 label이 아니다
-_SUP_RE = re.compile(r"<sup>(.*?)</sup>")
-_SUP_DIGITS = str.maketrans("0123456789", "⁰¹²³⁴⁵⁶⁷⁸⁹")
+_FENCE_RE = re.compile(r"^```")
+# ponytail: refine.py R4의 사본이다 — 이 모듈은 strict 외에는 임포트하지 않는다
+# (PLAN.md "파일 구조"). md 직접 입력(#31)은 refine을 거치지 않으므로 필요하다.
+_SUP_SUB_RE = re.compile(r"<(sup|sub)>(.*?)</\1>")
+_SUP_MAP = str.maketrans("0123456789+-=()n", "⁰¹²³⁴⁵⁶⁷⁸⁹⁺⁻⁼⁽⁾ⁿ")
+_SUB_MAP = str.maketrans("0123456789+-=()aehijklmnoprstuvx",
+                         "₀₁₂₃₄₅₆₇₈₉₊₋₌₍₎ₐₑₕᵢⱼₖₗₘₙₒₚᵣₛₜᵤᵥₓ")
+_WORD_RUN_RE = re.compile(r"[^\W\d_]{2}")  # 글자 둘 = 낱말, 첨자가 아니다
 _CELL_SPLIT_RE = re.compile(r"(?<!\\)\|")  # R1은 |를 오직 \|로만 이스케이프한다
 _SEPARATOR_CELL_RE = re.compile(r"^:?-+:?$")
 
@@ -56,10 +62,24 @@ def to_blocks(md: str, image_dir: Path) -> NotionDoc:
     doc = NotionDoc(blocks=[], images=[], citations=[], ref_targets={}, warnings=[])
     lines = md.split("\n")
     i, n = 0, len(lines)
+    clamped = 0
     while i < n:
         line = lines[i].rstrip()  # hard break의 끝 2공백은 문법이지 내용이 아니다
         if not line:
             i += 1
+            continue
+
+        # 코드 펜스 — 가장 먼저 본다. 안쪽의 `|`·`#`·`$`는 표도 헤딩도 수식도
+        # 아니라 글자 그대로다 (R6, #46)
+        if _FENCE_RE.match(line):
+            j = i + 1
+            while j < n and not _FENCE_RE.match(lines[j].rstrip()):
+                j += 1
+            if j >= n:  # 닫히지 않음 — 남은 줄을 통째로 코드로 둔다. 내용은 무손실
+                doc.warnings.append(
+                    "unclosed code fence — the rest of the file became one code block")
+            _append_code(doc, "\n".join(l.rstrip() for l in lines[i + 1:j]))
+            i = j + 1
             continue
 
         # display 수식 — $$ 단독 줄 사이를 바이트 그대로
@@ -112,8 +132,10 @@ def to_blocks(md: str, image_dir: Path) -> NotionDoc:
             if depth == 1 and not doc.title:
                 doc.title = m.group(2)  # 첫 h1 = 논문 제목 — 페이지 제목 설정용 (#25)
             if depth > 3:
-                doc.warnings.append(
-                    f"clamped {'#' * depth} heading to heading_3: {m.group(2)[:40]}")
+                # Notion에는 헤딩이 3단계뿐이다. 강등 자체는 플랫폼 한도이고
+                # 번호(`6.1.1`)가 본문에 남아 단계를 구분한다 — 헤딩마다 한 줄씩
+                # 내면 실측 16줄이 되어 리포트를 덮는다. 실행당 한 줄 (#46)
+                clamped += 1
                 depth = 3
             _append_text_block(doc, f"heading_{depth}", m.group(2))
             i += 1
@@ -140,6 +162,10 @@ def to_blocks(md: str, image_dir: Path) -> NotionDoc:
 
         _append_text_block(doc, "paragraph", line)
         i += 1
+    if clamped:
+        doc.warnings.append(
+            f"clamped {clamped} heading(s) deeper than #### to heading_3 "
+            "(Notion has three heading levels; the section number keeps the depth)")
     return doc
 
 
@@ -160,6 +186,13 @@ def _append_text_block(doc: NotionDoc, btype: str, text: str) -> None:
     elements, cites = _rich_text(text, doc.warnings)
     doc.citations.extend((idx, rt_idx, num) for rt_idx, num in cites)
     doc.blocks.append({"type": btype, btype: {"rich_text": elements}})
+
+
+def _append_code(doc: NotionDoc, body: str) -> None:
+    """펜스 한 덩어리 → Notion code 블록 하나. 본문은 바이트 그대로 (#46)."""
+    doc.blocks.append({"type": "code", "code": {
+        "language": "plain text",
+        "rich_text": [{"type": "text", "text": {"content": c}} for c in _chunks(body)]}})
 
 
 def _append_plain(doc: NotionDoc, text: str) -> None:
@@ -291,15 +324,18 @@ def _emit_plain(s: str, elements: list[dict], warnings: list[str]) -> None:
     if not s:
         return
 
-    def _sup(m: re.Match) -> str:
-        inner = m.group(1)
-        if any(c.isdigit() for c in inner):
-            # 숫자가 문장에 섞여 읽히면 의미가 왜곡된다 (플랜: "gradients 4.")
-            warnings.append(f"<sup>{inner}</sup> converted to unicode superscript")
-            return inner.translate(_SUP_DIGITS)
-        return inner  # ∗ † ‡ — 위첨자 자형이 없어 문자만 남긴다
+    def _script(m: re.Match) -> str:
+        tag, inner = m.group(1), m.group(2)
+        table = _SUP_MAP if tag == "sup" else _SUB_MAP
+        if not inner or _WORD_RUN_RE.search(inner) or any(
+                ord(c) not in table for c in inner):
+            return inner  # ∗ † ‡ 와 낱말 — 자형이 없어 글자만 남긴다 (#46)
+        # 첨자가 본문 크기로 섞여 읽히면 의미가 왜곡된다 (플랜: "gradients 4.")
+        kind = "superscript" if tag == "sup" else "subscript"
+        warnings.append(f"<{tag}>{inner}</{tag}> converted to unicode {kind}")
+        return inner.translate(table)
 
-    s = _MD_ESCAPE_RE.sub(r"\1", _SUP_RE.sub(_sup, s))
+    s = _MD_ESCAPE_RE.sub(r"\1", _SUP_SUB_RE.sub(_script, s))
     for chunk in _chunks(s):
         elements.append({"type": "text", "text": {"content": chunk}})
 

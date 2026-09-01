@@ -261,9 +261,16 @@ def _upload_image(client: httpx.Client, headers: dict, img_path: Path) -> str:
 
 def _send(client: httpx.Client, method: str, url: str, headers: dict,
           step: str, **kw) -> dict:
-    """요청 간격 유지 + 429/5xx 1회 재시도 + 오류를 NotionApiError로 변환."""
+    """요청 간격 유지 + 전송 오류/429/5xx 1회 재시도 + 오류를 NotionApiError로 변환."""
     time.sleep(REQUEST_INTERVAL)
-    resp = client.request(method, url, headers=headers, **kw)
+    try:
+        resp = client.request(method, url, headers=headers, **kw)
+    except httpx.TransportError:
+        # 끊긴 연결은 재시도한다 — 1000블록+이미지를 올리는 몇 분 사이 한 번만
+        # 끊겨도 전량 실패였다 (CLAUDE.md §11.25, 실측 2회). 두 번째도 끊기면
+        # 예외를 그대로 올려 호출자가 NotionApiError로 감싼다.
+        time.sleep(1.0)
+        resp = client.request(method, url, headers=headers, **kw)
     if resp.status_code == 429 or resp.status_code >= 500:
         # ponytail: Retry-After를 초 단위 숫자로만 해석한다. HTTP-date 형식이
         # 실제로 나타나면 그때 파싱을 더한다.
